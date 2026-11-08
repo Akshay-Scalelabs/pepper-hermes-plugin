@@ -1,9 +1,12 @@
 name: pepper
-version: "0.1.0"
-description: Find ParlayTix fan tickets, recheck accepted terms, and open wallet review.
+version: "0.2.0"
+description: Find and save ParlayTix fan tickets, recheck accepted terms, and resume wallet review.
 requires_hermes: ">=0.23.0"
 provides_tools:
   - pepper_connection
   - pepper_find
+  - pepper_select
+  - pepper_resume
+  - pepper_forget
   - pepper_review
   - pepper_status
