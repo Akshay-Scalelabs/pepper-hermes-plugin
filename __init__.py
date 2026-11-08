@@ -360,6 +360,10 @@ def register(ctx):
             try:
                 if not isinstance(args, dict):
                     raise Refusal("Tool arguments must be an object.")
+                state = getattr(ctx, "state", None)
+                if (not callable(getattr(ctx, "call_mcp", None))
+                        or not all(callable(getattr(state, method, None)) for method in ("get", "set"))):
+                    raise Refusal("Pepper requires Hermes's public call_mcp and persistent state APIs. Update Hermes before using Pepper.", "HERMES_API_REQUIRED")
                 return json.dumps(_operation(ctx, args), ensure_ascii=False)
             except Refusal as exc:
                 return json.dumps({"ok": False, "code": exc.code, "error": str(exc),

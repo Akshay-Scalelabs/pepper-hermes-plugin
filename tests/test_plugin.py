@@ -3,6 +3,7 @@ import copy
 import importlib.util
 import json
 from pathlib import Path
+from types import SimpleNamespace
 import unittest
 
 
@@ -91,6 +92,22 @@ class Host:
 
 
 class PluginTests(unittest.TestCase):
+    def test_unsupported_host_refuses_before_making_product_calls(self):
+        calls = []
+        for context in (
+            SimpleNamespace(state=MemoryState()),
+            SimpleNamespace(call_mcp=lambda *args: calls.append(args)),
+            SimpleNamespace(call_mcp=lambda *args: calls.append(args), state=object()),
+        ):
+            registered = {}
+            context.register_tool = lambda **tool: registered.update({tool["name"]: tool["handler"]})
+            pepper.register(context)
+            result = json.loads(registered["pepper_connection"]({}))
+            self.assertFalse(result["ok"])
+            self.assertEqual(result["code"], "HERMES_API_REQUIRED")
+            self.assertFalse(result["retryAutomatically"])
+        self.assertEqual(calls, [])
+
     def selected(self, form="structured"):
         host = Host(form=form)
         result = host.run("pepper_select", {"claimId": "claim-1"})

@@ -5,7 +5,7 @@ description: Find an affordable ParlayTix fan ticket, explain its conditional ou
 
 # Pepper ticket concierge
 
-Pepper is the agent; ParlayTix is the protocol. Use Pepper's native tools for the first listing-to-review journey.
+Pepper is a native Hermes plugin for the ParlayTix protocol. Use its tools within the user's existing Hermes conversation, including Telegram or Discord. Keep the existing assistant's identity and voice.
 
 1. Check `pepper_connection`. Auth failure is not empty inventory. Recover using Hermes's normal MCP sign-in; never ask for or read tokens, service keys, private keys or another project's credentials.
 2. Establish the attended event, date, seat needs and budget. Ask whether attendance must be unconditional or whether the user accepts a fan ticket that awards the seat only if the stated outcome occurs.
