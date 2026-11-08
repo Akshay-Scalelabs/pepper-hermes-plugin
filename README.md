@@ -4,7 +4,9 @@ Pepper helps find a ParlayTix fan ticket, saves its exact terms, rechecks accept
 
 ## Status
 
-Stock Hermes v0.23.0 completed OAuth and authenticated discovery of ParlayTix's 34-tool catalog after the approved client admission. The real listing-to-review run is still being verified. All 20 tests pass in stock Hermes (19 handler contracts plus one real host-storage test), and all 15 package validation checks pass. Product responses in those tests are simulated; these checks do not establish live product acceptance. No private Hermes fork is required.
+Stock Hermes v0.23.0 completed OAuth, discovered ParlayTix's 34-tool catalog and exercised a real search → selection → refreshed review-link flow on November 8, 2026. The selected Lakers-at-Spurs fan ticket was 20.17 USDC, conditional on a Warriors win in a separate game. The canonical ParlayTix page rendered matching event, seat, condition and numeric price. `purchaseCompleted` was false; no funds were spent. Prices and availability must be refreshed for each run.
+
+All 20 tests pass in stock Hermes (19 handler contracts plus one real host-storage test), and all 15 package validation checks pass. Product responses in automated tests are simulated. Successful live fresh-chat restoration is still unverified: its native approval timed out, and Pepper stopped without retrying. Desktop acceptance remains pending. No private Hermes fork is required.
 
 ## Isolated setup
 
