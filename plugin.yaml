@@ -1,0 +1,9 @@
+name: pepper
+version: "0.1.0"
+description: Find ParlayTix fan tickets, recheck accepted terms, and open wallet review.
+requires_hermes: ">=0.23.0"
+provides_tools:
+  - pepper_connection
+  - pepper_find
+  - pepper_review
+  - pepper_status
