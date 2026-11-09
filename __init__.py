@@ -405,7 +405,7 @@ def _owned(ctx, args):
     held = _call(ctx, "list_my_ticket_assets", {"page": page, "view": "held"})
     _same_account(ctx, account)
     return {"ok": True, "wholeTickets": whole, "fanTickets": held,
-            "guidance": "Start Parlay this only for a whole ticket with canSplit=true. Existing fan tickets cannot be re-split. Never substitute company inventory or invent verified backing."}
+            "guidance": "A whole ticket with eligibleForSplit=true can be previewed. canSplit and the refreshed preview's splitEnabled control whether creation is currently available. Existing fan tickets cannot be re-split. Never substitute company inventory or invent verified backing."}
 
 
 def _questions(ctx, args):
