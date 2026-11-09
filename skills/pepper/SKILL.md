@@ -1,11 +1,23 @@
 ---
 name: pepper
-description: Find an affordable ParlayTix fan ticket, explain its conditional outcome, and help the customer review it in their wallet.
+description: Parlay an owned verified ticket into complementary rights, keep one outcome, and review an offer for the other through the customer's wallet.
 ---
 
-# Pepper ticket concierge
+# Pepper for ParlayTix
 
 Pepper is a native Hermes plugin for the ParlayTix protocol. Use its tools within the user's existing Hermes conversation, including Telegram or Discord. Keep the existing assistant's identity and voice.
+
+## Parlay this — owned tickets
+
+1. Start with `pepper_connection` and `pepper_owned`. Match the user's ticket by exact event/date/seat and collateral ID. Only `canSplit=true` permits this flow. A verified, unsplit whole ticket is required; an existing Base fan ticket cannot be re-split. An empty inventory or disabled holder capability is not permission to use the company's ticket, create a demo asset or manufacture backing.
+2. Use `pepper_questions` for that ticket. Show eligible binary deciding questions separately from the event the ticket admits. For an event containing multiple questions, call it again with the returned eventId to obtain exact condition IDs. Do not invent IDs, market prices or ticket-price forecasts. This version's Pepper composer uses Polymarket source identities.
+3. Use `pepper_parlay` with the chosen collateralId, eventId and conditionId when needed. It saves a review draft without creating rights. Explain both complementary outcomes, resolution timing, and the returned cancellation/ambiguous-result rules. The probabilities describe the deciding event, not the likelihood of ticket prices falling. Splitting creates two rights over one seat, not two seats; both rights initially belong to the holder. Selling the other right gives its buyer the conditional entitlement under its terms. No sale or payout is guaranteed.
+4. Ask which exact outcome to keep and whether to create this displayed split. Only after explicit acceptance use `pepper_split` with the returned draftId, chosen keepOutcomeId and confirmed=true. Hermes's own write approval remains required. The plugin refreshes the preview and refuses changed ticket/backing/wallet/outcome terms. Never automatically accept a new preview or retry a denied call.
+5. Use `pepper_parlay_status` to resume, including after a new chat or lost response. It recovers the original request by a read; never issue a fresh request to guess whether the first succeeded. Pending issuance is not ownership. Only splitCompleted=true with the actual minted rights proves this step finished.
+6. If the user wants to offer the other right, agree an asking price and call `pepper_offer`. It selects the complementary right and preserves the chosen keep outcome. Present its canonical ParlayTix review link and the proposed price. The user must enter that price on the page, review the actual fee/proceeds, and confirm listing in their wallet. The link does not prefill the price, list a right or sign anything. Do not report projected proceeds as money received.
+7. Read `pepper_parlay_status` after wallet confirmation. `listingObserved` means a current listing exists; `listingMatchesDraft` checks the actual price and right against the saved offer. Neither proves a sale. Explain any mismatch. On explicit request, `pepper_parlay_forget` clears the exact local draft once it is previewed or issued; it does not cancel existing rights/listings, and pending recovery records remain protected.
+
+## Find and review an existing offer
 
 1. Check `pepper_connection`. Auth failure is not empty inventory. Recover using Hermes's normal MCP sign-in; never ask for or read tokens, service keys, private keys or another project's credentials.
 2. Establish the attended event, date, seat needs and budget. Ask whether attendance must be unconditional or whether the user accepts a fan ticket that awards the seat only if the stated outcome occurs.

@@ -8,6 +8,7 @@ import unittest
 from unittest.mock import patch
 
 from test_plugin import Host
+from test_parlay import host as holder_host, draft, confirmed
 
 
 @unittest.skipUnless(importlib.util.find_spec("hermes_cli"), "Requires the stock Hermes runtime")
@@ -29,11 +30,19 @@ class StockStateTests(unittest.TestCase):
                 resumed = fresh.run("pepper_resume")
                 self.assertEqual(resumed["selection"]["selectionId"], selected["selection"]["selectionId"])
                 self.assertNotIn("create_ticket_checkout", fresh.call_names())
+                holder = holder_host(state=context().state)
+                parlay = draft(holder)
+                holder.responses["create_ticket_split"] = RuntimeError("synthetic response loss")
+                self.assertEqual(holder.run("pepper_split", confirmed(parlay))["code"], "RESULT_UNKNOWN")
+                recovered = holder_host(state=context().state)
+                self.assertTrue(recovered.run("pepper_parlay_status")["splitCompleted"])
+                self.assertNotIn("create_ticket_split", recovered.call_names())
                 files = list(Path(first).glob("plugin-data/*/state.json"))
                 self.assertEqual(len(files), 1)
                 self.assertEqual(files[0].stat().st_mode & 0o777, 0o600)
             with patch.dict(os.environ, {"HERMES_HOME": second}):
                 self.assertIsNone(Host(state=context().state).run("pepper_resume")["selection"])
+                self.assertIsNone(holder_host(state=context().state).run("pepper_parlay_status")["draft"])
             with patch.dict(os.environ, {"HERMES_HOME": first}):
                 restored = Host(state=context().state)
                 self.assertEqual(restored.run("pepper_resume")["selection"]["selectionId"],

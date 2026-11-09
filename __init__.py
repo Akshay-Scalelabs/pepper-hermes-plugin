@@ -168,7 +168,9 @@ def _card(asset):
         "marketTicker", "eventTicker", "resultKeySchema", "cellKey", "rowLegKey", "columnLegKey",
         "resolutionRules", "expectedResolutionDate", "gameStartTime"))
     nft = _fields(asset.get("nft"), ("termsHash", "cardAddress", "tokenId"))
-    nft_source = asset.get("nft") if isinstance(asset.get("nft"), dict) else {}
+    nft_source = asset.get("nft")
+    if not isinstance(nft_source, dict):
+        nft_source = {}
     nft["chainId"] = nft_source.get("chainId") if type(nft_source.get("chainId")) is int else None
     listed = asset.get("listing")
     listing = None
@@ -178,9 +180,11 @@ def _card(asset):
                    "version": _integer(listed.get("version"), "listing version"),
                    "price": str(_price(listed.get("price"))),
                    "currency": _text(listed.get("currency"), "currency", 10)}
-    pricing = asset.get("pricing") if isinstance(asset.get("pricing"), dict) else {}
+    pricing = asset.get("pricing")
+    if not isinstance(pricing, dict):
+        pricing = {}
     probability = pricing.get("probability")
-    if (type(probability) not in (int, float) or not 0 <= probability <= 1
+    if (not isinstance(probability, (int, float)) or isinstance(probability, bool) or not 0 <= probability <= 1
             or pricing.get("freshness") != "fresh" or not pricing.get("observedAt")):
         probability = None
     deadlines = _fields(asset, ("tradingClosesAt", "claimBy"))
@@ -338,6 +342,220 @@ def _status(ctx, args):
     return _checkout(_call(ctx, "get_ticket_checkout", {"claimId": claim_id}), claim_id)
 
 
+def _parlay_state(ctx, account, value=None, *, write=False):
+    key = "parlay:" + sha256(account.encode("utf-8")).hexdigest()
+    try:
+        if write:
+            ctx.state.set(key, value)
+            return value
+        saved = ctx.state.get(key)
+    except Exception:
+        raise Refusal("Pepper could not save or restore the Parlay draft. Stop before creating any rights.", "STATE_UNAVAILABLE") from None
+    if saved is not None:
+        try:
+            valid = (isinstance(saved, dict) and saved["schemaVersion"] == 1 and saved["accountId"] == account
+                     and re.fullmatch(r"[0-9a-f]{32}", saved["draftId"]) and isinstance(saved["phase"], str)
+                     and _text(saved["source"]["collateralId"], "collateralId") and _text(saved["source"]["eventId"], "eventId")
+                     and len(saved["preview"]["outcomes"]) == 2 and _split_terms(saved["preview"]))
+        except (KeyError, TypeError, AttributeError, Refusal):
+            valid = False
+        if not valid:
+            raise Refusal("The saved Parlay draft is unreadable and has been preserved.", "STATE_INVALID")
+    return saved
+
+
+def _holder_preview(data):
+    admission = data.get("admission", {})
+    outcomes = data.get("outcomes")
+    if (data.get("splitKind") != "complementary_ticket_rights" or data.get("createsListings") is not False
+            or not isinstance(admission, dict) or admission.get("eligible") is not True
+            or not re.fullmatch(r"[0-9a-f]{64}", str(admission.get("universeHash", "")))
+            or not re.fullmatch(r"0x[0-9a-f]{64}", str(data.get("previewHash", "")))
+            or not isinstance(outcomes, list) or len(outcomes) != 2
+            or {o.get("outcome") for o in outcomes if isinstance(o, dict)} != {"YES", "NO"}):
+        raise Refusal("ParlayTix did not return an eligible complementary ticket split.", "SPLIT_UNAVAILABLE")
+    sides = []
+    for outcome in outcomes:
+        sides.append({**_fields(outcome, ("outcome", "label", "description", "resolutionRules", "resolutionAt", "resolutionTimeKind", "observedAt", "freshness")),
+                      "outcomeId": _text(outcome.get("outcomeId"), "outcomeId"),
+                      "probability": outcome.get("probability") if outcome.get("freshness") == "fresh"
+                      and type(outcome.get("probability")) in (int, float) and 0 <= outcome["probability"] <= 1 else None})
+    if len({side["outcomeId"] for side in sides}) != 2 or any(not side["resolutionRules"] or not side["resolutionAt"] for side in sides):
+        raise Refusal("The split needs distinct outcomes with source rules and resolution timing.", "SPLIT_UNAVAILABLE")
+    ticket = _fields(data.get("ticket"), ("collateralId", "canonicalEventKey", "eventName", "eventDate", "venue", "section", "row", "seat", "backingClass"))
+    if ticket["collateralId"] != data.get("collateralId") or ticket["backingClass"] != "live":
+        raise Refusal("The preview does not identify a verified whole ticket.", "SPLIT_UNAVAILABLE")
+    return {"ticket": ticket, "outcomes": sides, "universeHash": admission["universeHash"], "previewHash": data["previewHash"],
+            "splitEnabled": data.get("splitEnabled") is True}
+
+
+def _split_terms(preview):
+    return {**{k: v for k, v in preview.items() if k != "splitEnabled"}, "outcomes": [{k: v for k, v in side.items() if k not in ("probability", "observedAt", "freshness")}
+                                    for side in preview["outcomes"]]}
+
+
+def _parlay_draft(saved):
+    return {key: saved.get(key) for key in ("draftId", "createdAt", "phase", "preview", "keepOutcomeId", "offer", "splitId")}
+
+
+def _owned(ctx, args):
+    account = _account(ctx)
+    page = _integer(args.get("page", 1), "page", 1000)
+    whole = _call(ctx, "list_my_ticket_inventory", {"page": page})
+    held = _call(ctx, "list_my_ticket_assets", {"page": page, "view": "held"})
+    _same_account(ctx, account)
+    return {"ok": True, "wholeTickets": whole, "fanTickets": held,
+            "guidance": "Start Parlay this only for a whole ticket with canSplit=true. Existing fan tickets cannot be re-split. Never substitute company inventory or invent verified backing."}
+
+
+def _questions(ctx, args):
+    account = _account(ctx)
+    body = {"collateralId": _text(args.get("collateralId"), "collateralId"), "page": _integer(args.get("page", 1), "page", 1000)}
+    if args.get("query"):
+        body["query"] = _text(args["query"], "query", 120)
+    if args.get("eventId"):
+        body["eventId"] = _text(args["eventId"], "eventId")
+        body.pop("page", None)
+        body.pop("query", None)
+    result = _call(ctx, "search_ticket_split_questions", body)
+    _same_account(ctx, account)
+    return {"ok": True, "questions": result, "nextStep": "Choose a binary question. Use its exact eventId and conditionId, when supplied, to preview the split."}
+
+
+def _parlay(ctx, args):
+    account = _account(ctx)
+    prior = _parlay_state(ctx, account)
+    if prior and prior.get("phase") != "preview":
+        raise Refusal("An existing Parlay request needs attention. Read pepper_parlay_status before starting another.", "PARLAY_PENDING")
+    source = {"collateralId": _text(args.get("collateralId"), "collateralId"), "eventId": _text(args.get("eventId"), "eventId")}
+    if args.get("conditionId"):
+        source["conditionId"] = _text(args["conditionId"], "conditionId")
+    preview = _holder_preview(_call(ctx, "preview_ticket_split", source))
+    if preview["ticket"]["collateralId"] != source["collateralId"]:
+        raise Refusal("The preview does not match the chosen ticket.")
+    _same_account(ctx, account)
+    saved = {"schemaVersion": 1, "accountId": account, "draftId": uuid4().hex, "createdAt": _now(),
+             "phase": "preview", "source": source, "preview": preview}
+    _parlay_state(ctx, account, saved, write=True)
+    return {"ok": True, "draft": _parlay_draft(saved), "splitCompleted": False,
+            "nextStep": "Explain the attended event and separate deciding question, both rights and the source's cancellation/ambiguous-result rules. Ask which outcome to keep and whether to create this exact split. This is not a cash parlay or a ticket-price forecast. Both rights initially remain yours; listing needs a separate wallet confirmation."}
+
+
+def _parlay_status_for(ctx, account, saved):
+    query = {"splitId": saved["splitId"]} if saved.get("splitId") else {"idempotencyKey": "pepper-" + saved["draftId"]}
+    data = _call(ctx, "get_ticket_split", query)
+    split_id = _text(data.get("splitId"), "splitId")
+    if (saved.get("splitId") and saved["splitId"] != split_id) or data.get("rootCollateralId") != saved["source"]["collateralId"]:
+        raise Refusal("The returned split does not match this saved ticket.")
+    assets = data.get("assets")
+    if (not isinstance(assets, list) or any(not isinstance(asset, dict) or not isinstance(asset.get("condition"), dict)
+                                          or not isinstance(asset.get("nft"), dict) for asset in assets)):
+        raise Refusal("ParlayTix did not return split assets.")
+    expected = {side["outcomeId"] for side in saved["preview"]["outcomes"]}
+    ready = data.get("splitCompleted") is True
+    if ready and (len(assets) != 2 or {asset.get("condition", {}).get("outcomeId") for asset in assets} != expected
+                  or len({asset.get("claimId") for asset in assets}) != 2
+                  or any(asset.get("rootCollateralId") != saved["source"]["collateralId"] or asset.get("nft", {}).get("mintStatus") != "minted" for asset in assets)):
+        raise Refusal("The confirmed rights do not match the accepted split.", "SPLIT_MISMATCH")
+    _same_account(ctx, account)
+    saved = {**saved, "splitId": split_id, "phase": "ready" if ready else data.get("status", "pending")}
+    _parlay_state(ctx, account, saved, write=True)
+    offer = saved.get("offer")
+    offered = next((asset for asset in assets if offer and asset.get("claimId") == offer["claimId"]), None)
+    listing = offered.get("listing") if offered else None
+    listing_live = bool(listing and listing.get("status") == "live")
+    listing_matches = False
+    if listing_live and offered is not None and offer is not None and listing is not None:
+        listing_matches = (offered.get("nft", {}).get("termsHash") == offer["termsHash"]
+                           and _price(listing.get("price")) == _price(offer["askingPrice"]))
+    return {"ok": True, "draft": _parlay_draft(saved), "splitCompleted": ready, "status": data,
+            "listingObserved": listing_live, "listingMatchesDraft": listing_matches,
+            "nextStep": "Both rights are confirmed. Keep the chosen outcome; use pepper_offer to review the other right's proposed asking price. A live listing is not a sale." if ready
+            else "Issuance is not confirmed. Read status later; do not create another split or list a pending right."}
+
+
+def _split(ctx, args):
+    account = _account(ctx, "ticketing:write")
+    saved = _parlay_state(ctx, account)
+    if not saved or saved["draftId"] != args.get("draftId"):
+        raise Refusal("Preview the exact split in this account before confirming it.", "PARLAY_DRAFT_REQUIRED")
+    if saved.get("phase") != "preview":
+        return _parlay_status_for(ctx, account, saved)
+    keep = _text(args.get("keepOutcomeId"), "keepOutcomeId")
+    if args.get("confirmed") is not True or keep not in {side["outcomeId"] for side in saved["preview"]["outcomes"]}:
+        raise Refusal("The user must accept the displayed split and choose the exact outcome to keep.", "SPLIT_CONFIRMATION_REQUIRED")
+    current = _holder_preview(_call(ctx, "preview_ticket_split", saved["source"]))
+    if not current["splitEnabled"]:
+        raise Refusal("Holder splitting is not enabled on ParlayTix yet. Keep this preview; no split was submitted.", "SPLIT_UNAVAILABLE")
+    if _split_terms(current) != _split_terms(saved["preview"]):
+        raise Refusal("The split terms changed. Preview again and obtain fresh acceptance.", "TERMS_CHANGED")
+    _same_account(ctx, account, "ticketing:write")
+    saved = {**saved, "phase": "requesting", "keepOutcomeId": keep}
+    # Persist the request key BEFORE the write. A lost response is recovered by a read, never a blind retry.
+    _parlay_state(ctx, account, saved, write=True)
+    try:
+        result = _call(ctx, "create_ticket_split", {**saved["source"], "universeHash": current["universeHash"],
+                       "previewHash": current["previewHash"], "idempotencyKey": "pepper-" + saved["draftId"], "confirmed": True})
+    except Refusal as error:
+        if error.code in ("APPROVAL_DENIED", "APPROVAL_UNAVAILABLE"):
+            _parlay_state(ctx, account, {**saved, "phase": "preview"}, write=True)
+        raise
+    saved = {**saved, "splitId": _text(result.get("splitId"), "splitId"), "phase": "pending"}
+    _same_account(ctx, account, "ticketing:write")
+    _parlay_state(ctx, account, saved, write=True)
+    return {"ok": True, "draft": _parlay_draft(saved), "splitCompleted": False,
+            "nextStep": "The split was accepted for issuance. Read pepper_parlay_status until both rights are confirmed. Nothing has been listed."}
+
+
+def _parlay_status(ctx, args):
+    account = _account(ctx)
+    saved = _parlay_state(ctx, account)
+    if not saved:
+        return {"ok": True, "draft": None, "nextStep": "No Parlay draft for this account. Start with pepper_owned."}
+    if saved.get("phase") == "preview":
+        current = _holder_preview(_call(ctx, "preview_ticket_split", saved["source"]))
+        _same_account(ctx, account)
+        return {"ok": True, "draft": _parlay_draft(saved), "currentPreview": current,
+                "termsChanged": _split_terms(current) != _split_terms(saved["preview"]), "splitCompleted": False}
+    return _parlay_status_for(ctx, account, saved)
+
+
+def _offer(ctx, args):
+    account = _account(ctx)
+    saved = _parlay_state(ctx, account)
+    if not saved or saved["draftId"] != args.get("draftId") or not saved.get("keepOutcomeId"):
+        raise Refusal("Choose and create a Parlay split before reviewing an offer.", "PARLAY_DRAFT_REQUIRED")
+    price = _price(args.get("askingPrice"))
+    if price <= 0 or price > 1000000 or price * 100 != (price * 100).to_integral_value():
+        raise Refusal("Choose a positive asking price with at most two decimal places.")
+    result = _parlay_status_for(ctx, account, saved)
+    if not result["splitCompleted"]:
+        raise Refusal("Wait until both rights are confirmed before reviewing a listing.", "SPLIT_PENDING")
+    asset = next(asset for asset in result["status"]["assets"] if asset["condition"]["outcomeId"] != saved["keepOutcomeId"])
+    if asset.get("isOwner") is not True or "list" not in asset.get("nft", {}).get("actions", []):
+        raise Refusal("Your wallet cannot currently list the other right. Inspect its actual status.", "LISTING_UNAVAILABLE")
+    claim_id = _text(asset.get("claimId"), "claimId")
+    offer = {"claimId": claim_id, "askingPrice": str(price), "termsHash": _text(asset.get("nft", {}).get("termsHash"), "termsHash"),
+             "reviewUrl": "https://parlaytix.xyz/claims/" + quote(claim_id, safe="")}
+    saved = _parlay_state(ctx, account)
+    if not saved or saved["draftId"] != args["draftId"]:
+        raise Refusal("The active Parlay draft changed. Resume it before reviewing an offer.", "PARLAY_DRAFT_REQUIRED")
+    _parlay_state(ctx, account, {**saved, "offer": offer}, write=True)
+    return {"ok": True, "offer": offer, "keptOutcomeId": saved["keepOutcomeId"], "listingCreated": False,
+            "nextStep": "Open this right on ParlayTix, enter this asking price, review the displayed fee and proceeds, and confirm listing in your wallet. The link does not prefill a price or sign anything. Then use pepper_parlay_status to verify the actual listing."}
+
+
+def _parlay_forget(ctx, args):
+    account = _account(ctx)
+    saved = _parlay_state(ctx, account)
+    if not saved or saved["draftId"] != args.get("draftId") or args.get("confirmed") is not True:
+        raise Refusal("Confirm the exact draft to clear from this profile.")
+    if saved.get("phase") not in ("preview", "ready"):
+        raise Refusal("Keep the recovery record until the pending split is resolved.", "PARLAY_PENDING")
+    _parlay_state(ctx, account, None, write=True)
+    return {"ok": True, "nextStep": "The local Parlay draft was cleared. Existing rights, listings and wallet operations remain on ParlayTix."}
+
+
 def register(ctx):
     definitions = [
         ("pepper_connection", "Check ParlayTix connection and granted permissions.", _connection, {}, []),
@@ -354,6 +572,19 @@ def register(ctx):
          ["selectionId", "conditionalTicketAccepted"]),
         ("pepper_status", "Read this account's current checkout and completed receipt for a card.", _status,
          {"claimId": {"type": "string"}}, ["claimId"]),
+        ("pepper_owned", "Start Parlay this: list your whole tickets and existing fan rights with eligibility.", _owned,
+         {"page": {"type": "integer", "minimum": 1, "maximum": 1000}}, []),
+        ("pepper_questions", "Find deciding questions for your own verified whole ticket; copy exact source IDs.", _questions,
+         {"collateralId": {"type": "string"}, "query": {"type": "string"}, "eventId": {"type": "string"}, "page": {"type": "integer"}}, ["collateralId"]),
+        ("pepper_parlay", "Preview and save a Parlay split of your whole ticket into two complementary rights. Does not create rights.", _parlay,
+         {"collateralId": {"type": "string"}, "eventId": {"type": "string"}, "conditionId": {"type": "string"}}, ["collateralId", "eventId"]),
+        ("pepper_split", "Create the exact reviewed split only after the user's explicit confirmation and chosen keep outcome. Subsequent calls only read status.", _split,
+         {"draftId": {"type": "string"}, "keepOutcomeId": {"type": "string"}, "confirmed": {"type": "boolean"}}, ["draftId", "keepOutcomeId", "confirmed"]),
+        ("pepper_parlay_status", "Resume the saved Parlay draft or read its confirmed rights and actual listing. Recovers a lost creation response without resubmitting.", _parlay_status, {}, []),
+        ("pepper_offer", "Save a proposed asking price and return wallet review for the other right. Preserves the chosen keep outcome; creates no listing.", _offer,
+         {"draftId": {"type": "string"}, "askingPrice": {"type": "string", "description": "User-chosen price in USD/USDC units, at most two decimal places."}}, ["draftId", "askingPrice"]),
+        ("pepper_parlay_forget", "Clear the exact local Parlay draft on request after preview or completed issuance. Does not cancel rights or listings; pending recovery records cannot be cleared.", _parlay_forget,
+         {"draftId": {"type": "string"}, "confirmed": {"type": "boolean"}}, ["draftId", "confirmed"]),
     ]
     for name, description, operation, properties, required in definitions:
         def handler(args, _operation=operation, **kwargs):

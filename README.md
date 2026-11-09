@@ -1,8 +1,10 @@
 # Pepper for Hermes
 
-Pepper is a native plugin for your existing Hermes assistant. It finds ParlayTix fan tickets, saves their exact terms, rechecks accepted terms and returns the customer's wallet-review link. Use those tools in the same Hermes conversation on Telegram, Discord or the CLI. The saved selection survives a new chat or restart, with fresh account and status checks on return. Desktop UI remains separate work.
+Pepper adds “Parlay this” to your existing Hermes assistant on Telegram or Discord: choose your verified whole ticket, preview two complementary rights, confirm the split, keep one outcome and review an offer for the other in your wallet. Its saved draft survives a chat interruption, binds the exact accepted terms and recovers uncertain creation by reading the original request. It also supports finding and reviewing existing fan-ticket offers. No separate bot or Hermes fork is needed.
 
 ## Status
+
+Version 0.3.0 adds the holder composer and requires the new public holder adapter. It is a build candidate until the Marketplace and Public MCP changes are released and a real Telegram test passes. Holder creation is separately gated by `TICKET_HOLDER_SPLIT_ENABLED` on Marketplace, off by default. The first supported asset is a verified, unsplit whole ticket. Current Base fan tickets cannot be re-split. Both new rights initially mint to the account's existing wallet; listing remains a separate Terminal wallet action. No live holder split, listing or Telegram completion is claimed by local tests.
 
 Stock Hermes v0.23.0 completed OAuth, discovered ParlayTix's 34-tool catalog and exercised a real search → selection → refreshed review-link flow on November 8, 2026. The selected Lakers-at-Spurs fan ticket was 20.17 USDC, conditional on a Warriors win in a separate game. The canonical ParlayTix page rendered matching event, seat, condition and numeric price. `purchaseCompleted` was false; no funds were spent. Prices and availability must be refreshed for each run.
 
@@ -63,7 +65,9 @@ Replace the placeholders with the observed port and confirmed personal host. Do 
 
 If Hermes runs inside a container, its callback listener binds **the container's loopback interface**. SSH forwarding to the VPS host's loopback, or to the container IP alone, does not reach that listener. Establish an isolated forward into the container network namespace and its loopback listener, then tunnel that host-side forward over SSH. Verify this path before consent; do not expose the callback port publicly or change the unrelated project's container networking.
 
-Start a new Hermes session after setup. Ask: “Pepper, find fan tickets for [event].” Select an actual offer, inspect its saved terms and explicitly accept its condition before asking Pepper to prepare review. `pepper_review` takes the saved selection ID, refreshes the card and verifies its event/seat/condition/deadlines and listing/version/price/currency, Base purchase eligibility and canonical review URL. An actual customer confirmation remains in Terminal. In a new chat, ask “Pepper, resume my saved ticket.”
+If the connection has an explicit tool include-list, preserve its entries and add `list_my_ticket_inventory`, `list_my_ticket_assets`, `search_ticket_split_questions`, `preview_ticket_split`, `create_ticket_split` and `get_ticket_split`. These are fixed product tools; do not grant an arbitrary passthrough.
+
+Start a new Hermes chat after setup. Ask: “Use Pepper. Show tickets I own that I can parlay.” Choose an eligible ticket and deciding question; review both outcomes before accepting the split. When returning, ask “Resume my Pepper parlay.” For the existing buyer flow, ask “Use Pepper to find fan tickets for [event]” and accept the exact selected conditional offer before requesting its wallet review.
 
 If the normal connection test reports `OAUTH_CLIENT_NOT_ALLOWED`, sign-in may already have completed: the protected resource is refusing the client. The platform owner must admit the exact Hermes identity in both `PUBLIC_MCP_OAUTH_CANARY_ALLOWLIST_JSON` and `MCP_OAUTH_CANARY_ALLOWLIST_JSON`, preserving existing entries and fields. Do not change client identity, enable DCR or repeat login to fix a server allowlist. Let Hermes refresh its existing credentials and retest after admission.
 
@@ -78,8 +82,17 @@ If the normal connection test reports `OAUTH_CLIENT_NOT_ALLOWED`, sign-in may al
 | `pepper_forget` | Clear only this account/profile's saved selection |
 | `pepper_review` | Recheck the saved terms and prepare the canonical wallet review link |
 | `pepper_status` | Read checkout status and matching finalized purchase receipt |
+| `pepper_owned` | Read whole-ticket eligibility and existing held rights |
+| `pepper_questions` | Discover deciding questions for the owned ticket |
+| `pepper_parlay` | Save the exact two-outcome preview without issuing rights |
+| `pepper_split` | Refresh accepted terms, save the request key, then submit the explicitly confirmed split |
+| `pepper_parlay_status` | Recover/resume the same request and check minted rights and actual listing |
+| `pepper_offer` | Save the other right's proposed ask and return its wallet review page |
+| `pepper_parlay_forget` | Clear a preview or completed local draft without cancelling product state |
 
-The plugin uses documented `ctx.call_mcp`, so Hermes owns OAuth, credentials, refresh, transport and approvals. It makes requests only to the configured `parlaytix-prod` server and does not expose an arbitrary tool passthrough. It reads no credential files, runs no shell commands, starts no background work, and sends no telemetry. Responses are treated as untrusted data. Review preparation writes nothing to ParlayTix and spends no funds on the current public MCP contract.
+The plugin uses documented `ctx.call_mcp`, so Hermes owns OAuth, credentials, refresh, transport and approvals. It makes requests only to the configured `parlaytix-prod` server and does not expose an arbitrary tool passthrough. It reads no credential files, runs no shell commands, starts no background work, and sends no telemetry. Responses are treated as untrusted data. Confirmed holder splitting creates real rights through the existing issuer. Preview, status and listing-review preparation do not sign or spend from the customer's wallet.
+
+The account-bound Parlay record stores one current draft: exact ticket/source identities, outcome rules, preview hashes, chosen keep outcome, stable request key, split ID and proposed offer. It contains no credentials or wallet signing payload. A lost write response keeps that request key for read-only recovery. An explicit listing review opens the existing card page: the user enters the price there and reviews fees before signing. Pepper verifies the resulting listing against the saved ask; it does not equate a listing with a sale.
 
 `ctx.state` stores one selected ticket per ParlayTix account under the active Hermes profile's plugin-data directory. Stored data includes the account ID, generated selection ID, selected/read timestamps and a bounded projection of the ticket, condition, listing, deadlines and market observation. It excludes credentials, raw wallet payloads and checkout receipts. Hermes writes this JSON atomically with mode `0600`. These local records are not encrypted by Pepper; the profile's owner can read them. Pepper checks live account identity and ticket permissions before restoring a record and rechecks identity after the product reads. Revoked access cannot fall back to an offline saved card. Local selection state is not authoritative proof of price, inventory, a running watch or ownership.
 

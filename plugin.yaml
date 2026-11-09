@@ -1,6 +1,6 @@
 name: pepper
-version: "0.2.1"
-description: Find and save ParlayTix fan tickets, recheck accepted terms, and resume wallet review.
+version: "0.3.0"
+description: Parlay your own verified ticket into complementary rights, keep one, and review the other in your wallet.
 requires_hermes: ">=0.21.5"
 provides_tools:
   - pepper_connection
@@ -10,3 +10,10 @@ provides_tools:
   - pepper_forget
   - pepper_review
   - pepper_status
+  - pepper_owned
+  - pepper_questions
+  - pepper_parlay
+  - pepper_split
+  - pepper_parlay_status
+  - pepper_offer
+  - pepper_parlay_forget
