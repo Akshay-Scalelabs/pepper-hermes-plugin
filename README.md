@@ -8,7 +8,7 @@ Version 0.3.0 adds the holder composer and requires the new public holder adapte
 
 Stock Hermes v0.23.0 completed OAuth, discovered ParlayTix's 34-tool catalog and exercised a real search → selection → refreshed review-link flow on November 8, 2026. The selected Lakers-at-Spurs fan ticket was 20.17 USDC, conditional on a Warriors win in a separate game. The canonical ParlayTix page rendered matching event, seat, condition and numeric price. `purchaseCompleted` was false; no funds were spent. Prices and availability must be refreshed for each run.
 
-All 21 tests pass on official stock Hermes 0.23.0 and the personal runtime reporting 0.21.5. Native package validation passes all 15 checks on stock and all 13 checks on the personal runtime, with no warnings. Version 0.2.1 adds a host-API compatibility check and its test. Product responses in automated tests are simulated. Successful live fresh-chat restoration is still unverified: its native approval timed out, and Pepper stopped without retrying. Desktop acceptance remains pending. No private Hermes fork is required.
+Version 0.3.0 passes all 33 tests on official stock Hermes 0.23.0 and the personal runtime reporting 0.21.5, including actual Hermes storage and lost split-response recovery. Native package validation passes all 15 checks on stock and all 13 checks on the personal runtime. Product responses and chain events in automated tests are simulated. The prior 0.2.1 live buyer run did not complete fresh-chat restoration: its native approval timed out, and Pepper stopped without retrying. Live holder and Desktop acceptance remain pending. No private Hermes fork is required.
 
 ## Setup
 
@@ -16,7 +16,7 @@ The package accepts Hermes 0.21.5+ and checks for the public `call_mcp` and pers
 
 For Telegram or Discord, install Pepper and configure its MCP connection in the profile that already serves those channels. Add `pepper` and `parlaytix-prod` to that channel's existing toolsets when it uses an explicit toolset list. Preserve its current tools, bot identity and access controls. A separate development profile does not make Pepper available to the existing bot. Hermes owns channel delivery and native approval prompts; the plugin neither creates a chatbot nor starts a messaging adapter.
 
-Use a dedicated profile for development. For normal use, choose the existing profile that serves your Hermes conversations. Install/enable this local package using the installed host's `hermes plugins` commands, and run the following connection commands in that same profile. Preserve its other plugins and settings. No separate bot or Hermes core patch is needed.
+Use a dedicated profile for development. For normal use, choose the existing profile that serves your Hermes conversations. During development, place this package in that profile's `plugins/pepper` directory, validate it, then use `hermes plugins enable pepper`. Preserve an existing Pepper installation and its state when upgrading. The native install command accepts a Git repository or catalog entry; this candidate has not been published there yet. Run the following connection commands in the same profile, preserving its other plugins and settings.
 
 ParlayTix must admit the exact native Hermes OAuth client in both of its client allowlists before product access works. The native CLI uses CIMD and PKCE; ParlayTix does not support Dynamic Client Registration. The client ID is `https://nousresearch.github.io/hermes-agent/docs/oauth/client-metadata.json`; the integration endpoint is `https://mcp.parlaytix.xyz/mcp`.
 
@@ -105,7 +105,7 @@ Explicit stock-Hermes approval denial and reauthentication responses retain thei
 ```sh
 python3 -m unittest discover -s tests -v
 hermes plugins doctor /absolute/path/to/pepper-hermes-plugin --ci
-hermes plugins validate /absolute/path/to/pepper-hermes-plugin --install-deps
+hermes plugins validate /absolute/path/to/pepper-hermes-plugin
 ```
 
 The tests exercise registered handlers through the public host seam: envelope variations, refusal/truncation, account/profile separation, restart and unknown-response recovery, changed ticket/condition/listing terms, canonical handoff validation and receipt-based status. They do not prove live inventory, transport approvals, deployment or a funded purchase. Validate on the actual declared stock release and perform an interactive live run before submission.
