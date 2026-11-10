@@ -18,3 +18,7 @@ provides_tools:
   - pepper_parlay_status
   - pepper_offer
   - pepper_parlay_forget
+  - pepper_watches
+  - pepper_watch
+  - pepper_watch_control
+  - pepper_watch_respond

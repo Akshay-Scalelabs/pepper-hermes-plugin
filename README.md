@@ -71,6 +71,8 @@ If Hermes runs inside a container, its callback listener binds **the container's
 
 If the connection has an explicit tool include-list, preserve its entries and add `list_my_ticket_inventory`, `list_my_ticket_assets`, `search_ticket_split_questions`, `preview_ticket_split`, `create_ticket_split` and `get_ticket_split`. These are fixed product tools; do not grant an arbitrary passthrough.
 
+**Scout watches.** A watch asks ParlayTix to look for tickets to one event under a total price. It needs the separate Scout read and Scout write consents, granted under AI agents in ParlayTix; the ticket permissions do not cover it. With an explicit include-list, also add `list_scout_intents`, `get_scout_intent`, `create_scout_intent`, `activate_scout_intent`, `pause_scout_intent`, `resume_scout_intent`, `cancel_scout_intent` and `respond_to_scout_intent_approval`. Pepper saves a draft, activates it only after you confirm, and never pays: a paid step returns a ParlayTix payment page. Pepper sends no notifications, so ask “any news on my watch?” to read its stored state. Editing a watch's terms and funding from your own XP account are not available here.
+
 Start a new Hermes chat after setup or this upgrade so it receives Pepper’s native prompt section. Say **“parlay this”**. Answer the ownership question, choose an eligible ticket and deciding question, then review both outcomes before accepting the split. You do not need to name Pepper or supply internal IDs. When returning, ask “Resume my Pepper parlay.” For the existing buyer flow, ask “Use Pepper to find fan tickets for [event]” and accept the exact selected conditional offer before requesting its wallet review.
 
 If the connection test reports `OAUTH_CLIENT_NOT_ALLOWED` after sign-in, contact ParlayTix about admission for the native Hermes OAuth client. A different client identity would have a different grant.
@@ -94,6 +96,10 @@ If the connection test reports `OAUTH_CLIENT_NOT_ALLOWED` after sign-in, contact
 | `pepper_parlay_status` | Recover/resume the same request and check minted rights and actual listing |
 | `pepper_offer` | Save the other right's proposed ask and return its wallet review page |
 | `pepper_parlay_forget` | Clear a preview or completed local draft without cancelling product state |
+| `pepper_watches` | Read your Scout watches, or one watch with its pending approval |
+| `pepper_watch` | Save a draft watch for one event: tickets, total cap, deadline and approval mode |
+| `pepper_watch_control` | Activate, pause, resume or cancel a watch after explicit confirmation |
+| `pepper_watch_respond` | Approve or decline a watch's pending approval after the user decides |
 
 The plugin uses documented `ctx.call_mcp`, so Hermes owns OAuth, credentials, refresh, transport and approvals. It makes requests only to the configured `parlaytix-prod` server and does not expose an arbitrary tool passthrough. It reads no credential files, runs no shell commands, starts no background work, and sends no telemetry. Responses are treated as untrusted data. Confirmed holder splitting creates real rights through the existing issuer. Preview, status and listing-review preparation do not sign or spend from the customer's wallet.
 
@@ -116,6 +122,7 @@ Try these cases from your own Hermes chat.
 | Preview an eligible ticket, then open a new chat and say “resume my Pepper parlay.” | The same account sees its draft and refreshed terms. Another account cannot resume it. |
 | Decline a native tool approval. | Pepper stops. A new attempt requires a new direction from you. |
 | Choose “find one,” select an offer and open wallet review. | The Terminal page shows the selected terms. Opening review does not complete a purchase. |
+| Choose “find one,” then ask Pepper to watch for two tickets under a total price. | Pepper saves a draft watch, shows its terms and activates it only after you confirm. Without Scout consent it says so and makes no watch. |
 | With a separately admitted ticket, keep one outcome and review the other at your chosen price. | Pepper asks for exact split confirmation. Terminal asks for the listing signature. Pepper reports a listing only after it reads an active listing for the correct right and ask. |
 
 The automated suite also exercises changed terms and recovery after a lost issuer response. Run it from a checkout with the stock Hermes Python environment to include the two native host tests.
