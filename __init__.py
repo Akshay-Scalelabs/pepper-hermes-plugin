@@ -49,6 +49,43 @@ class Refusal(Exception):
         self.code = code
 
 
+# ParlayTix's own public refusal codes, exactly as its gateway prints them: "CODE (HTTP 409)". Only these exact
+# tokens are recognised, and only the fixed sentence below is returned, never the surrounding upstream text.
+REFUSALS = {
+    "TICKET_ALREADY_FRACTIONALIZED": "This ticket has already been split, so it cannot be split again. Nothing was created.",
+    "HOLDER_SPLIT_UNAVAILABLE": "ParlayTix is not accepting a split for this account or ticket right now. Nothing was created.",
+    "TICKET_NOT_FOUND": "ParlayTix found no such ticket in this account.",
+    "TICKET_NOT_AVAILABLE": "This is not a verified whole ticket that can be split.",
+    "HOLDER_BINARY_SPLIT_REQUIRED": "That question does not have exactly two outcomes. Choose a Yes/No question.",
+    "INVALID_HOLDER_SPLIT_INPUT": "ParlayTix refused these split details. Choose the ticket and question again from pepper_owned and pepper_questions.",
+    "NFT_WALLET_REQUIRED": "This account has no ParlayTix wallet yet. The user sets one up in ParlayTix first.",
+    "NFT_ISSUANCE_WALLET_INVALID": "This account's wallet cannot receive the rights. The user checks their wallet in ParlayTix.",
+    "HOLDER_SPLIT_TERMS_CHANGED": "The ticket, wallet or outcomes changed since the preview. Preview again and obtain fresh acceptance.",
+    "PACK_UNIVERSE_CHANGED": "The deciding question changed since the preview. Preview again and obtain fresh acceptance.",
+    "CONDITION_RESOLVES_TOO_SOON": "That question resolves too soon to split on. Choose a later one.",
+    "CONDITION_SETTLES_AFTER_EVENT": "That question settles after the ticket's own event. Choose one that settles before it.",
+    "TICKET_SPLIT_NOT_FOUND": "ParlayTix has no split for this request.",
+    "PACK_PARTIAL_ISSUANCE_REQUIRES_REVIEW": "Part of this split was issued and ParlayTix must review it. Do not create another split; the user contacts ParlayTix support.",
+    "LISTING_CHANGED": "The listing changed. Select the ticket again and obtain fresh acceptance.",
+    "NFT_LISTING_UNAVAILABLE": "This offer is no longer for sale.",
+    "NFT_OWN_LISTING": "This is the user's own listing.",
+    "NFT_TRADING_CLOSED": "Trading on this ticket has closed.",
+    "SCOUT_INTENT_NOT_FOUND": "ParlayTix found no such watch in this account.",
+    "SCOUT_INTENT_INVALID_TRANSITION": "The watch is not in a state that allows this. Read pepper_watches for its actual status.",
+    "SCOUT_INTENT_WRITE_INPUT_INVALID": "ParlayTix refused these watch terms. Check the event, a deadline before the event starts, and the totals.",
+    "SCOUT_INTENT_CAPACITY_REACHED": "This account has reached its watch limit. Cancel one first.",
+    "SCOUT_JUST_BUY_REQUIRES_PREPAY": "A just_buy watch starts only after its cap is prepaid in ParlayTix. Activate it to get the payment page.",
+    "SCOUT_PAYMENT_HELD": "This watch holds a payment. The user resolves it on the ParlayTix watch page.",
+    "PAYMENT_ADMISSION_DISABLED": "ParlayTix is not accepting this paid step right now. Nothing was charged.",
+    "PRODUCT_ACCEPTANCE_REQUIRED": "ParlayTix is not accepting this paid step right now. Nothing was charged.",
+}
+_REFUSAL = re.compile(r"\b(" + "|".join(REFUSALS) + r") \(HTTP [45]\d\d\)")
+# create_ticket_split refuses with these before it writes anything, so the reviewed draft is still just a preview.
+SPLIT_NOT_CREATED = {"TICKET_ALREADY_FRACTIONALIZED", "HOLDER_SPLIT_UNAVAILABLE", "TICKET_NOT_FOUND", "TICKET_NOT_AVAILABLE",
+                     "HOLDER_BINARY_SPLIT_REQUIRED", "INVALID_HOLDER_SPLIT_INPUT", "NFT_WALLET_REQUIRED", "NFT_ISSUANCE_WALLET_INVALID",
+                     "HOLDER_SPLIT_TERMS_CHANGED", "PACK_UNIVERSE_CHANGED", "CONDITION_RESOLVES_TOO_SOON", "CONDITION_SETTLES_AFTER_EVENT"}
+
+
 def _host_failure(error, tool):
     # These are exact stock Hermes handler templates, not inferred meanings of
     # arbitrary upstream text. call_mcp drops the native needs_reauth metadata.
@@ -62,6 +99,9 @@ def _host_failure(error, tool):
         return Refusal("Hermes could not obtain approval, so the call was not run. Stop and restore interactive approval before continuing.", "APPROVAL_UNAVAILABLE")
     if isinstance(error, str) and error.startswith(f"MCP server '{SERVER}' requires re-authentication."):
         return Refusal("Stop and ask the user to re-authenticate with `hermes mcp login parlaytix-prod` in the same profile. Do not retry this tool before sign-in completes.", "NEEDS_REAUTH")
+    known = _REFUSAL.search(error) if isinstance(error, str) else None
+    if known:
+        return Refusal(REFUSALS[known.group(1)] + " Do not retry this unchanged.", known.group(1))
     return Refusal("The result is unknown. Do not automatically retry. Inspect ParlayTix status and the Hermes connection before deciding whether to retry.", "RESULT_UNKNOWN")
 
 
@@ -95,9 +135,9 @@ def _call(ctx, tool, arguments):
         envelope = ctx.call_mcp(SERVER, tool, arguments, timeout=60)
     except PermissionError:
         raise Refusal("Grant Pepper access to parlaytix-prod in Hermes plugin settings. Do not retry until access is granted.", "MCP_ACCESS_REQUIRED") from None
-    except Exception:
-        # The host may raise transport errors containing private URLs or credentials.
-        raise _host_failure(None, tool) from None
+    except Exception as error:
+        # The host may raise transport errors containing private URLs or credentials: only fixed sentences leave here.
+        raise _host_failure(str(error), tool) from None
     if not isinstance(envelope, dict) or envelope.get("ok") is not True:
         raise _host_failure(envelope.get("error") if isinstance(envelope, dict) else None, tool)
     if envelope.get("truncated"):
@@ -110,7 +150,7 @@ def _call(ctx, tool, arguments):
             try:
                 payload = json.loads(payload)
             except (ValueError, TypeError):
-                raise _host_failure(None, tool) from None
+                raise _host_failure(payload, tool) from None
         if not isinstance(payload, dict):
             raise _host_failure(None, tool)
         if payload.get("isError") or payload.get("truncated") or payload.get("error") is not None:
@@ -472,7 +512,18 @@ def _parlay(ctx, args):
 
 def _parlay_status_for(ctx, account, saved):
     query = {"splitId": saved["splitId"]} if saved.get("splitId") else {"idempotencyKey": "pepper-" + saved["draftId"]}
-    data = _call(ctx, "get_ticket_split", query)
+    try:
+        data = _call(ctx, "get_ticket_split", query)
+    except Refusal as error:
+        if error.code != "TICKET_SPLIT_NOT_FOUND" or saved.get("splitId"):
+            raise
+        # ParlayTix never recorded this request. The draft keeps its request key, so confirming it again cannot
+        # create a second split even if the first attempt is still landing.
+        _same_account(ctx, account)
+        saved = {**saved, "phase": "preview"}
+        _parlay_state(ctx, account, saved, write=True)
+        return {"ok": True, "draft": _parlay_draft(saved), "splitCompleted": False, "notCreated": True,
+                "nextStep": "ParlayTix has no split for this request, so nothing was created. The draft is a preview again: ask the user whether to confirm it with pepper_split or forget it."}
     split_id = _text(data.get("splitId"), "splitId")
     if (saved.get("splitId") and saved["splitId"] != split_id) or data.get("rootCollateralId") != saved["source"]["collateralId"]:
         raise Refusal("The returned split does not match this saved ticket.")
@@ -500,6 +551,7 @@ def _parlay_status_for(ctx, account, saved):
     return {"ok": True, "draft": _parlay_draft(saved), "splitCompleted": ready, "status": data,
             "listingObserved": listing_live, "listingMatchesDraft": listing_matches,
             "nextStep": "Both rights are confirmed. Keep the chosen outcome; use pepper_offer to review the other right's proposed asking price. A live listing is not a sale." if ready
+            else "ParlayTix reports this split failed. Show the returned status; the user may forget this draft with pepper_parlay_forget and preview again." if saved["phase"] == "failed"
             else "Issuance is not confirmed. Read status later; do not create another split or list a pending right."}
 
 
@@ -526,7 +578,7 @@ def _split(ctx, args):
         result = _call(ctx, "create_ticket_split", {**saved["source"], "universeHash": current["universeHash"],
                        "previewHash": current["previewHash"], "idempotencyKey": "pepper-" + saved["draftId"], "confirmed": True})
     except Refusal as error:
-        if error.code in ("APPROVAL_DENIED", "APPROVAL_UNAVAILABLE"):
+        if error.code in ("APPROVAL_DENIED", "APPROVAL_UNAVAILABLE") or error.code in SPLIT_NOT_CREATED:
             _parlay_state(ctx, account, {**saved, "phase": "preview"}, write=True)
         raise
     saved = {**saved, "splitId": _text(result.get("splitId"), "splitId"), "phase": "pending"}
@@ -579,7 +631,7 @@ def _parlay_forget(ctx, args):
     saved = _parlay_state(ctx, account)
     if not saved or saved["draftId"] != args.get("draftId") or args.get("confirmed") is not True:
         raise Refusal("Confirm the exact draft to clear from this profile.")
-    if saved.get("phase") not in ("preview", "ready"):
+    if saved.get("phase") not in ("preview", "ready", "failed"):
         raise Refusal("Keep the recovery record until the pending split is resolved.", "PARLAY_PENDING")
     _parlay_state(ctx, account, None, write=True)
     return {"ok": True, "nextStep": "The local Parlay draft was cleared. Existing rights, listings and wallet operations remain on ParlayTix."}

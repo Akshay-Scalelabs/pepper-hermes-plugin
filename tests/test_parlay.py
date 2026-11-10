@@ -163,6 +163,56 @@ class ParlayTests(unittest.TestCase):
         self.assertEqual(h.run("pepper_parlay_status")["draft"]["phase"], "preview")
         self.assertEqual(h.call_names().count("create_ticket_split"), 1)
 
+    def test_a_definite_refusal_names_its_reason_and_leaves_a_usable_preview(self):
+        for error in ("TICKET_ALREADY_FRACTIONALIZED (HTTP 409)",
+                      "Error executing tool create_ticket_split: CONDITION_RESOLVES_TOO_SOON (HTTP 409)"):
+            h = host(); d = draft(h)
+            h.responses["create_ticket_split"] = {"ok": False, "error": error}
+            refused = h.run("pepper_split", confirmed(d))
+            self.assertIn(refused["code"], error)
+            self.assertNotIn("Error executing", refused["error"])
+            self.assertFalse(refused["retryAutomatically"])
+            self.assertEqual(h.run("pepper_parlay_status")["draft"]["phase"], "preview")
+            self.assertTrue(h.run("pepper_parlay_forget", {"draftId": d["draftId"], "confirmed": True})["ok"])
+            self.assertTrue(h.run("pepper_parlay", {"collateralId": "tc_owned", "eventId": "123"})["ok"])
+
+    def test_only_exact_listed_codes_are_named(self):
+        for error in ("SECRET_TOKEN_LEAK (HTTP 409)", "TICKET_ALREADY_FRACTIONALIZED", "ticket_already_fractionalized (HTTP 409)",
+                      "TICKET_ALREADY_FRACTIONALIZED (HTTP 200)", "XTICKET_NOT_FOUND (HTTP 404)"):
+            h = host(); d = draft(h)
+            h.responses["create_ticket_split"] = {"ok": False, "error": error}
+            refused = h.run("pepper_split", confirmed(d))
+            self.assertEqual(refused["code"], "RESULT_UNKNOWN", error)
+            self.assertNotIn("SECRET", refused["error"])
+            self.assertEqual(h.state.values[next(iter(h.state.values))]["phase"], "requesting")
+
+    def test_a_request_parlaytix_never_recorded_returns_to_preview_with_the_same_key(self):
+        h = host(); d = draft(h)
+        h.responses["create_ticket_split"] = RuntimeError("synthetic response loss")
+        self.assertEqual(h.run("pepper_split", confirmed(d))["code"], "RESULT_UNKNOWN")
+        h.responses["get_ticket_split"] = {"ok": False, "error": "TICKET_SPLIT_NOT_FOUND (HTTP 404)"}
+        status = h.run("pepper_parlay_status")
+        self.assertTrue(status["notCreated"])
+        self.assertEqual(status["draft"]["phase"], "preview")
+        h.responses["create_ticket_split"] = {"splitId": "split_1"}
+        self.assertTrue(h.run("pepper_split", confirmed(d))["ok"])
+        keys = [args["idempotencyKey"] for _, tool, args in h.calls if tool == "create_ticket_split"]
+        self.assertEqual(keys, ["pepper-" + d["draftId"]] * 2)
+
+    def test_a_known_split_that_goes_missing_stays_protected(self):
+        h = host(); d = draft(h)
+        self.assertTrue(h.run("pepper_split", confirmed(d))["ok"])
+        h.responses["get_ticket_split"] = {"ok": False, "error": "TICKET_SPLIT_NOT_FOUND (HTTP 404)"}
+        self.assertEqual(h.run("pepper_parlay_status")["code"], "TICKET_SPLIT_NOT_FOUND")
+        self.assertEqual(h.run("pepper_parlay_forget", {"draftId": d["draftId"], "confirmed": True})["code"], "PARLAY_PENDING")
+
+    def test_a_failed_split_can_be_forgotten(self):
+        h = host(); d = draft(h)
+        h.responses["get_ticket_split"] = {**h.responses["get_ticket_split"], "splitCompleted": False, "status": "failed"}
+        h.run("pepper_split", confirmed(d))
+        self.assertIn("failed", h.run("pepper_parlay_status")["nextStep"])
+        self.assertTrue(h.run("pepper_parlay_forget", {"draftId": d["draftId"], "confirmed": True})["ok"])
+
 
 if __name__ == "__main__":
     unittest.main()
