@@ -25,6 +25,10 @@ pepper_split; 'parlay this' alone never confirms issuance. Resume pending work w
 After confirmed issuance, ask whether to list the other side and at what price. pepper_offer supplies
 its wallet review page; the user enters the price and confirms there. Verify the actual listing with
 pepper_parlay_status. A prepared link is not a listing, and a listing is not a sale.
+If nothing fits their budget, offer a Scout watch: pepper_watch saves a draft from the matched event, total cap,
+ticket count, deadline and whether to tell them, check first or just buy. Confirm the terms before
+pepper_watch_control activates it. Pepper sends no updates itself; read pepper_watches when they ask, and
+answer a pending approval with pepper_watch_respond only after they decide. Payment happens on ParlayTix.
 Do not invent ownership, odds, verification, outcomes or background work. Respect native approvals."""
 
 
@@ -581,6 +585,115 @@ def _parlay_forget(ctx, args):
     return {"ok": True, "nextStep": "The local Parlay draft was cleared. Existing rights, listings and wallet operations remain on ParlayTix."}
 
 
+WATCH_ACTIONS = {"activate": "activate_scout_intent", "pause": "pause_scout_intent",
+                 "resume": "resume_scout_intent", "cancel": "cancel_scout_intent"}
+WATCH_NOTE = ("This is stored watch state: monitoring health is unknown, and Pepper sends no updates on its own, "
+              "so the user asks again later. A found, approved or filled watch is not ticket delivery.")
+
+
+def _watch_account(ctx, scope):
+    permissions = _connection(ctx, {})["connection"]
+    if scope not in permissions["scopes"]:
+        raise Refusal("This ParlayTix connection has no Scout watch consent for this step. The user grants it under AI agents in ParlayTix. Do not retry before then.", "WATCH_CONSENT_REQUIRED")
+    return permissions["accountId"]
+
+
+def _watch_same(ctx, account):
+    if _connection(ctx, {})["connection"]["accountId"] != account:
+        raise Refusal("The ParlayTix account changed during this request. Read pepper_watches in the intended account before doing anything else.", "ACCOUNT_CHANGED")
+
+
+def _scout_id(value):
+    if not isinstance(value, str) or not re.fullmatch(r"scout_[0-9a-f]{32}", value):
+        raise Refusal("Use the exact scoutId returned by pepper_watch or pepper_watches.")
+    return value
+
+
+def _usd(value, name):
+    price = _price(value)
+    if price <= 0 or price > 1000000 or price * 100 != (price * 100).to_integral_value():
+        raise Refusal(f"{name} must be a positive USD total with at most two decimal places.")
+    return f"{price:.2f}"
+
+
+def _watch_reply(data, done):
+    intent = data.get("intent")
+    if not isinstance(intent, dict) or not isinstance(intent.get("scoutId"), str):
+        raise _host_failure(None, "scout watch")
+    payment = data.get("payment")
+    if isinstance(payment, dict):
+        # The owner pays on ParlayTix's own payment page. Any other link is dropped, never shown.
+        url = payment.get("paymentUrl")
+        try:
+            parsed = urlsplit(url) if isinstance(url, str) else None
+        except ValueError:
+            parsed = None
+        trusted = bool(parsed and parsed.scheme == "https" and parsed.netloc in ("parlaytix.xyz", "www.parlaytix.xyz")
+                       and parsed.path.startswith("/pay/"))
+        payment = {**_fields(payment, ("paymentRequestId", "status")), "paymentUrl": url if trusted else None}
+        done = ("Payment is required before this takes effect. " + ("Present paymentUrl as 'Pay on ParlayTix'." if trusted
+                else "Ask the user to open this watch in ParlayTix to pay.") + " Pepper never pays, and nothing is bought until the owner confirms there.")
+    else:
+        payment = None
+    return {"ok": True, "watch": intent, "payment": payment, "replayed": data.get("replayed") is True,
+            "nextStep": done + " " + WATCH_NOTE}
+
+
+def _watches(ctx, args):
+    account = _watch_account(ctx, "scout-intents:read")
+    if args.get("scoutId"):
+        data = _call(ctx, "get_scout_intent", {"scoutId": _scout_id(args["scoutId"])})
+    else:
+        body = {"limit": 20}
+        if args.get("cursor"):
+            body["cursor"] = _text(args["cursor"], "cursor", 20)
+        data = _call(ctx, "list_scout_intents", body)
+    _watch_same(ctx, account)
+    return {"ok": True, "watches": data,
+            "guidance": WATCH_NOTE + " For a pending approval, show its exact terms and use pepper_watch_respond only after the user decides."}
+
+
+def _watch(ctx, args):
+    account = _watch_account(ctx, "scout-intents:write")
+    approval, quantity = args.get("approval"), args.get("quantity")
+    if approval not in ("tell_me", "check_first", "just_buy") or type(quantity) is not int or not 1 <= quantity <= 8:
+        raise Refusal("Choose 1 to 8 tickets and how the watch may act: tell_me, check_first or just_buy.")
+    terms = {"xpEventId": _text(args.get("xpEventId"), "xpEventId"), "quantity": quantity,
+             "capTotalUSD": _usd(args.get("capTotalUSD"), "The cap"),
+             "deadlineAt": _text(args.get("deadlineAt"), "deadlineAt", 40), "approval": approval}
+    if args.get("aimTotalUSD") is not None:
+        terms["aimTotalUSD"] = _usd(args["aimTotalUSD"], "The aim")
+    if args.get("note"):
+        terms["note"] = _text(args["note"], "note", 200)
+    # ponytail: the request key is a hash of the terms, so a lost reply replays the same draft instead of making a
+    # second one. Identical terms cannot create another watch; add a saved key if users ever need that.
+    key = "pepper-watch-" + sha256(json.dumps([account, terms], sort_keys=True).encode("utf-8")).hexdigest()[:32]
+    data = _call(ctx, "create_scout_intent", {**terms, "idempotencyKey": key})
+    _watch_same(ctx, account)
+    return _watch_reply(data, "The watch is saved. If its status is draft it is not watching yet: show these exact terms and ask before pepper_watch_control activates it. If replayed is true, this is an earlier watch with the same terms.")
+
+
+def _watch_control(ctx, args):
+    account = _watch_account(ctx, "scout-intents:write")
+    tool = WATCH_ACTIONS.get(args.get("action"))
+    if not tool or args.get("confirmed") is not True:
+        raise Refusal("Name activate, pause, resume or cancel, and obtain the user's explicit confirmation for this exact watch first.", "WATCH_CONFIRMATION_REQUIRED")
+    data = _call(ctx, tool, {"scoutId": _scout_id(args.get("scoutId"))})
+    _watch_same(ctx, account)
+    return _watch_reply(data, "The returned status is the watch's actual state. Cancelling is permanent; a held payment follows the ParlayTix watch page.")
+
+
+def _watch_respond(ctx, args):
+    account = _watch_account(ctx, "scout-intents:write")
+    response = args.get("response")
+    if response not in ("approve", "decline") or args.get("confirmed") is not True:
+        raise Refusal("Show the pending approval's exact terms and obtain the user's explicit approve or decline first.", "WATCH_CONFIRMATION_REQUIRED")
+    data = _call(ctx, "respond_to_scout_intent_approval", {
+        "scoutId": _scout_id(args.get("scoutId")), "decisionId": _text(args.get("decisionId"), "decisionId"), "response": response})
+    _watch_same(ctx, account)
+    return _watch_reply(data, "The answer is recorded. Approving is not a purchase; read pepper_watches for what happened next.")
+
+
 def register(ctx):
     ctx.register_system_prompt_section("pepper.journey", JOURNEY_PROMPT, max_chars=2200)
     definitions = [
@@ -612,6 +725,24 @@ def register(ctx):
          {"draftId": {"type": "string"}, "askingPrice": {"type": "string", "description": "User-chosen price in USD/USDC units, at most two decimal places."}}, ["draftId", "askingPrice"]),
         ("pepper_parlay_forget", "Clear the exact local Parlay draft on request after preview or completed issuance. Does not cancel rights or listings; pending recovery records cannot be cleared.", _parlay_forget,
          {"draftId": {"type": "string"}, "confirmed": {"type": "boolean"}}, ["draftId", "confirmed"]),
+        ("pepper_watches", "Read your Scout watches: stored terms, status, decisions and any pending approval. Pass scoutId for one watch. Starts, pays and buys nothing.", _watches,
+         {"scoutId": {"type": "string"}, "cursor": {"type": "string"}}, []),
+        ("pepper_watch", "Save a draft Scout watch for one event from pepper_find. It does not start watching, pay or buy.", _watch,
+         {"xpEventId": {"type": "string", "description": "The exact providerEventId of the matched event from pepper_find."},
+          "quantity": {"type": "integer", "minimum": 1, "maximum": 8},
+          "capTotalUSD": {"type": "string", "description": "The most the user will pay in total for all tickets, for example 300.00."},
+          "aimTotalUSD": {"type": "string", "description": "Optional total the user hopes for, at or below the cap."},
+          "deadlineAt": {"type": "string", "description": "ISO time before the event starts when the watch should stop."},
+          "approval": {"type": "string", "enum": ["tell_me", "check_first", "just_buy"],
+                       "description": "tell_me only reports; check_first asks before acting; just_buy needs prepayment in ParlayTix."},
+          "note": {"type": "string", "maxLength": 200}},
+         ["xpEventId", "quantity", "capTotalUSD", "deadlineAt", "approval"]),
+        ("pepper_watch_control", "Activate, pause, resume or permanently cancel one watch after the user's explicit confirmation. Never pays; a paid step returns a ParlayTix payment page.", _watch_control,
+         {"scoutId": {"type": "string"}, "action": {"type": "string", "enum": ["activate", "pause", "resume", "cancel"]},
+          "confirmed": {"type": "boolean"}}, ["scoutId", "action", "confirmed"]),
+        ("pepper_watch_respond", "Approve or decline a watch's pending approval with its exact decisionId after the user decides. Approving is not a purchase.", _watch_respond,
+         {"scoutId": {"type": "string"}, "decisionId": {"type": "string"}, "response": {"type": "string", "enum": ["approve", "decline"]},
+          "confirmed": {"type": "boolean"}}, ["scoutId", "decisionId", "response", "confirmed"]),
     ]
     for name, description, operation, properties, required in definitions:
         def handler(args, _operation=operation, **kwargs):
