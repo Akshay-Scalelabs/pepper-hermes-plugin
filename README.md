@@ -1,27 +1,30 @@
 # Pepper for Hermes
 
-Say **“parlay this”** to your existing Hermes assistant on Discord or Telegram. Pepper asks whether you already have a ticket or want to find one, then guides ticket selection, the deciding outcome you want to keep, split confirmation and a price for listing the other side. Its saved draft survives a chat interruption, binds exact accepted terms and recovers uncertain creation by reading the original request. No separate bot or Hermes fork is needed.
+Say **“parlay this”** to the Hermes assistant you already use. With a verified ticket, Pepper can show two complementary outcomes for the same seat. Choose the side you want to keep and review listing the other in your wallet. If you need a ticket, Pepper can find an existing offer and show its event, condition, seat and current price. You can resume a saved draft in a new chat.
 
-## Install the review build
+## Install
 
-Accept the private GitHub invitation. Run these commands on the host that serves your Discord or Telegram chat, using the same Hermes profile as the gateway. The first command checks that Git can read the repository with your own GitHub credentials. The second installs the Pepper 0.4.0 revision tested on Discord. Stock Hermes 0.23.0 is the reference host.
+Run the install on the host and Hermes profile that serve your chat. Pepper 0.4.0 has been tested on stock Hermes 0.23.0.
 
 ```sh
-git ls-remote https://github.com/Akshay-Scalelabs/pepper-hermes-plugin.git HEAD
-hermes plugins install Akshay-Scalelabs/pepper-hermes-plugin --ref 24f0fc2a7a1c82aa27675b99cf3e854bc43a1ced --enable
+hermes plugins install Akshay-Scalelabs/pepper-hermes-plugin --enable
 ```
 
 Complete the ParlayTix connection below with your own account. If your channel has an explicit toolset list, include `pepper` and `parlaytix-prod` alongside its existing tools. Reload the gateway that serves the profile after configuration and start a new conversation. Say **“parlay this”**.
 
-An account with a verified, unsplit whole ticket can preview both rights. Live issuance also requires Marketplace to admit the exact account and ticket. The existing development grant covers one pair. A reviewer using a different account can test discovery, ticket review, empty inventory and eligible previews. Live issuance for that reviewer requires a separate grant. Both issued rights go to the holder’s wallet. The holder confirms a listing in Terminal.
+**Availability.** Live splitting requires ParlayTix to admit the specific account and verified, unsplit ticket. With an eligible ticket you can preview the outcomes. Without one, choose **“find one”**, name an event and select an offer to see the buyer’s review page. Both issued rights initially belong to the holder. The holder decides whether to list one and signs that action in ParlayTix.
+
+![ParlayTix buyer review showing a Lakers at Spurs ticket, its Warriors-win condition and the quoted price](docs/ticket-review.png)
+
+Pepper opened this signed-out ParlayTix page during a buyer-review test. The price in the screenshot was the quote for that run.
 
 ## Setup
 
 Pepper uses the native `register_system_prompt_section`, `call_mcp` and persistent-state APIs. Hermes owns the chat, OAuth and tool approvals.
 
-ParlayTix must admit the exact native Hermes OAuth client in both of its client allowlists before product access works. The native CLI uses CIMD and PKCE; ParlayTix does not support Dynamic Client Registration. The client ID is `https://nousresearch.github.io/hermes-agent/docs/oauth/client-metadata.json`; the integration endpoint is `https://mcp.parlaytix.xyz/mcp`.
+Sign in with your own ParlayTix account through Hermes. The public MCP uses Streamable HTTP and WorkOS OAuth at `https://mcp.parlaytix.xyz/mcp`. Stock Hermes uses its published client metadata and PKCE.
 
-For a fresh Pepper profile with no existing `parlaytix-prod` entry, stage the server disabled and configure trust before connecting:
+For a fresh profile, run these commands to configure the connection and sign in.
 
 ```sh
 hermes config set mcp_servers.parlaytix-prod.enabled false
@@ -70,7 +73,7 @@ If the connection has an explicit tool include-list, preserve its entries and ad
 
 Start a new Hermes chat after setup or this upgrade so it receives Pepper’s native prompt section. Say **“parlay this”**. Answer the ownership question, choose an eligible ticket and deciding question, then review both outcomes before accepting the split. You do not need to name Pepper or supply internal IDs. When returning, ask “Resume my Pepper parlay.” For the existing buyer flow, ask “Use Pepper to find fan tickets for [event]” and accept the exact selected conditional offer before requesting its wallet review.
 
-If the normal connection test reports `OAUTH_CLIENT_NOT_ALLOWED`, sign-in may already have completed: the protected resource is refusing the client. The platform owner must admit the exact Hermes identity in both `PUBLIC_MCP_OAUTH_CANARY_ALLOWLIST_JSON` and `MCP_OAUTH_CANARY_ALLOWLIST_JSON`, preserving existing entries and fields. Do not change client identity, enable DCR or repeat login to fix a server allowlist. Let Hermes refresh its existing credentials and retest after admission.
+If the connection test reports `OAUTH_CLIENT_NOT_ALLOWED` after sign-in, contact ParlayTix about admission for the native Hermes OAuth client. A different client identity would have a different grant.
 
 ## Tools
 
@@ -120,9 +123,9 @@ The automated suite also exercises changed terms and recovery after a lost issue
 ```sh
 python3 -m unittest discover -s tests -v
 hermes plugins doctor /absolute/path/to/pepper-hermes-plugin --ci
-hermes plugins validate /absolute/path/to/pepper-hermes-plugin
+hermes plugins validate /absolute/path/to/pepper-hermes-plugin --install-deps
 ```
 
-The tests exercise registered handlers through the public host seam: envelope variations, refusal/truncation, account/profile separation, restart and unknown-response recovery, changed ticket/condition/listing terms, canonical handoff validation and receipt-based status. They do not prove live inventory, transport approvals, deployment or a funded purchase. Validate on the actual declared stock release and perform an interactive live run before submission.
+The tests exercise tool registration, refusal and truncation, account and profile separation, changed terms, durable recovery, review links and receipt checks. The issuer and wallet responses in these tests are fixtures. Live operations require the signed-in account’s permissions and confirmations.
 
-Disable/remove the package with Hermes's native plugin manager. Remove the dedicated MCP connection with `hermes mcp remove parlaytix-prod` only when it belongs exclusively to this test profile. Local removal and provider consent revocation are separate actions.
+To uninstall, run `hermes plugins disable pepper` and `hermes plugins remove pepper`. Remove the MCP connection with `hermes mcp remove parlaytix-prod` if this profile used it only for Pepper. You can revoke the ParlayTix account grant separately.
