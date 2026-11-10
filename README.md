@@ -2,21 +2,22 @@
 
 Say **“parlay this”** to your existing Hermes assistant on Discord or Telegram. Pepper asks whether you already have a ticket or want to find one, then guides ticket selection, the deciding outcome you want to keep, split confirmation and a price for listing the other side. Its saved draft survives a chat interruption, binds exact accepted terms and recovers uncertain creation by reading the original request. No separate bot or Hermes fork is needed.
 
-## Status
+## Install the review build
 
-Version 0.4.0 adds a native prompt section and `pepper_start` for the short conversational entry point. Marketplace and Public MCP holder adapters are deployed. A real operator-attested development ticket passed inventory, discovery and preview on personal Hermes on November 9; actual Discord split/listing acceptance remains separate. General holder creation is off by default; Marketplace can admit one expiring account/ticket test grant. The first supported asset is a verified, unsplit whole ticket. Current Base fan tickets cannot be re-split. Both new rights initially mint to the account’s existing wallet; listing remains a separate Terminal wallet action. Development attestation does not establish physical admission-ticket custody.
+Accept the private GitHub invitation. Run these commands on the host that serves your Discord or Telegram chat, using the same Hermes profile as the gateway. The first command checks that Git can read the repository with your own GitHub credentials. The second installs the Pepper 0.4.0 revision tested on Discord. Stock Hermes 0.23.0 is the reference host.
 
-Stock Hermes v0.23.0 completed OAuth, discovered ParlayTix's 34-tool catalog and exercised a real search → selection → refreshed review-link flow on November 8, 2026. The selected Lakers-at-Spurs fan ticket was 20.17 USDC, conditional on a Warriors win in a separate game. The canonical ParlayTix page rendered matching event, seat, condition and numeric price. `purchaseCompleted` was false; no funds were spent. Prices and availability must be refreshed for each run.
+```sh
+git ls-remote https://github.com/Akshay-Scalelabs/pepper-hermes-plugin.git HEAD
+hermes plugins install Akshay-Scalelabs/pepper-hermes-plugin --ref 24f0fc2a7a1c82aa27675b99cf3e854bc43a1ced --enable
+```
 
-Version 0.3.0 passes all 33 tests on official stock Hermes 0.23.0 and the personal runtime reporting 0.21.5, including actual Hermes storage and lost split-response recovery. Native package validation passes all 15 checks on stock and all 13 checks on the personal runtime. Product responses and chain events in automated tests are simulated. The prior 0.2.1 live buyer run did not complete fresh-chat restoration: its native approval timed out, and Pepper stopped without retrying. Live holder and Desktop acceptance remain pending. No private Hermes fork is required.
+Complete the ParlayTix connection below with your own account. If your channel has an explicit toolset list, include `pepper` and `parlaytix-prod` alongside its existing tools. Reload the gateway that serves the profile after configuration and start a new conversation. Say **“parlay this”**.
+
+An account with a verified, unsplit whole ticket can preview both rights. Live issuance also requires Marketplace to admit the exact account and ticket. The existing development grant covers one pair. A reviewer using a different account can test discovery, ticket review, empty inventory and eligible previews. Live issuance for that reviewer requires a separate grant. Both issued rights go to the holder’s wallet. The holder confirms a listing in Terminal.
 
 ## Setup
 
-The package accepts Hermes 0.21.5+ and requires the native `register_system_prompt_section`, `call_mcp` and persistent-state APIs. The contract and storage tests passed on the personal runtime reporting 0.21.5 as well as official stock 0.23.0. The 0.21.5 check covers that installed build; no matching official release tag was available for a separate source comparison. Official 0.23.0 remains the release used for live product acceptance.
-
-For Telegram or Discord, install Pepper and configure its MCP connection in the profile that already serves those channels. Add `pepper` and `parlaytix-prod` to that channel's existing toolsets when it uses an explicit toolset list. Preserve its current tools, bot identity and access controls. A separate development profile does not make Pepper available to the existing bot. Hermes owns channel delivery and native approval prompts; the plugin neither creates a chatbot nor starts a messaging adapter.
-
-Use a dedicated profile for development. For normal use, choose the existing profile that serves your Hermes conversations. During development, place this package in that profile's `plugins/pepper` directory, validate it, then use `hermes plugins enable pepper`. Preserve an existing Pepper installation and its state when upgrading. The native install command accepts a Git repository or catalog entry; this candidate has not been published there yet. Run the following connection commands in the same profile, preserving its other plugins and settings.
+Pepper uses the native `register_system_prompt_section`, `call_mcp` and persistent-state APIs. Hermes owns the chat, OAuth and tool approvals.
 
 ParlayTix must admit the exact native Hermes OAuth client in both of its client allowlists before product access works. The native CLI uses CIMD and PKCE; ParlayTix does not support Dynamic Client Registration. The client ID is `https://nousresearch.github.io/hermes-agent/docs/oauth/client-metadata.json`; the integration endpoint is `https://mcp.parlaytix.xyz/mcp`.
 
@@ -102,6 +103,19 @@ The account-bound Parlay record stores one current draft: exact ticket/source id
 Explicit stock-Hermes approval denial and reauthentication responses retain their stop instructions through bounded error categories. Unknown responses never authorize automatic retries: inspect product status and connection state first. Raw upstream errors are not returned.
 
 ## Verification
+
+Try these cases from your own Hermes chat.
+
+| Try | Expected result |
+| --- | --- |
+| Say “parlay this” in a new chat. | Pepper asks whether you have a ticket or want to find one. The opening makes no product call. |
+| Choose “I have a ticket” with an empty or ineligible inventory. | Pepper explains what your account holds. It cannot create a split from an event name. |
+| Preview an eligible ticket, then open a new chat and say “resume my Pepper parlay.” | The same account sees its draft and refreshed terms. Another account cannot resume it. |
+| Decline a native tool approval. | Pepper stops. A new attempt requires a new direction from you. |
+| Choose “find one,” select an offer and open wallet review. | The Terminal page shows the selected terms. Opening review does not complete a purchase. |
+| With a separately admitted ticket, keep one outcome and review the other at your chosen price. | Pepper asks for exact split confirmation. Terminal asks for the listing signature. Pepper reports a listing only after it reads an active listing for the correct right and ask. |
+
+The automated suite also exercises changed terms and recovery after a lost issuer response. Run it from a checkout with the stock Hermes Python environment to include the two native host tests.
 
 ```sh
 python3 -m unittest discover -s tests -v
