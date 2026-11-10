@@ -1,8 +1,9 @@
 name: pepper
-version: "0.3.0"
+version: "0.4.0"
 description: Parlay your own verified ticket into complementary rights, keep one, and review the other in your wallet.
 requires_hermes: ">=0.21.5"
 provides_tools:
+  - pepper_start
   - pepper_connection
   - pepper_find
   - pepper_select

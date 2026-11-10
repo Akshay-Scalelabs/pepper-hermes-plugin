@@ -7,12 +7,25 @@ from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
 
-from test_plugin import Host
+from test_plugin import Host, pepper
 from test_parlay import host as holder_host, draft, confirmed
 
 
 @unittest.skipUnless(importlib.util.find_spec("hermes_cli"), "Requires the stock Hermes runtime")
 class StockStateTests(unittest.TestCase):
+    def test_guided_entry_is_rendered_by_native_prompt_sections(self):
+        from hermes_cli.plugins import PluginContext, PluginManager
+        from hermes_cli.plugins_manifest import PluginManifest
+
+        with tempfile.TemporaryDirectory(prefix="pepper-prompt-") as home, \
+                patch.dict(os.environ, {"HERMES_HOME": home}):
+            manager = PluginManager()
+            ctx = PluginContext(PluginManifest(name="pepper"), manager)
+            pepper.register(ctx)
+            sections = manager.render_system_prompt_sections({"session_id": "new-discord-chat"})
+            journey = next(section for section in sections if section.id == "pepper.journey")
+            self.assertEqual(journey.content, pepper.JOURNEY_PROMPT)
+
     def test_native_state_survives_new_context_and_isolates_profiles(self):
         from hermes_cli.plugins import PluginContext
         from hermes_cli.plugins_manifest import PluginManifest

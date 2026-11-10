@@ -1,10 +1,10 @@
 # Pepper for Hermes
 
-Pepper adds “Parlay this” to your existing Hermes assistant on Telegram or Discord: choose your verified whole ticket, preview two complementary rights, confirm the split, keep one outcome and review an offer for the other in your wallet. Its saved draft survives a chat interruption, binds the exact accepted terms and recovers uncertain creation by reading the original request. It also supports finding and reviewing existing fan-ticket offers. No separate bot or Hermes fork is needed.
+Say **“parlay this”** to your existing Hermes assistant on Discord or Telegram. Pepper asks whether you already have a ticket or want to find one, then guides ticket selection, the deciding outcome you want to keep, split confirmation and a price for listing the other side. Its saved draft survives a chat interruption, binds exact accepted terms and recovers uncertain creation by reading the original request. No separate bot or Hermes fork is needed.
 
 ## Status
 
-Version 0.3.0 adds the holder composer and requires the new public holder adapter. It is a build candidate until the Marketplace and Public MCP changes are released and a real Telegram test passes. Holder creation is separately gated by `TICKET_HOLDER_SPLIT_ENABLED` on Marketplace, off by default. The first supported asset is a verified, unsplit whole ticket. Current Base fan tickets cannot be re-split. Both new rights initially mint to the account's existing wallet; listing remains a separate Terminal wallet action. No live holder split, listing or Telegram completion is claimed by local tests.
+Version 0.4.0 adds a native prompt section and `pepper_start` for the short conversational entry point. Marketplace and Public MCP holder adapters are deployed. A real operator-attested development ticket passed inventory, discovery and preview on personal Hermes on November 9; actual Discord split/listing acceptance remains separate. General holder creation is off by default; Marketplace can admit one expiring account/ticket test grant. The first supported asset is a verified, unsplit whole ticket. Current Base fan tickets cannot be re-split. Both new rights initially mint to the account’s existing wallet; listing remains a separate Terminal wallet action. Development attestation does not establish physical admission-ticket custody.
 
 Stock Hermes v0.23.0 completed OAuth, discovered ParlayTix's 34-tool catalog and exercised a real search → selection → refreshed review-link flow on November 8, 2026. The selected Lakers-at-Spurs fan ticket was 20.17 USDC, conditional on a Warriors win in a separate game. The canonical ParlayTix page rendered matching event, seat, condition and numeric price. `purchaseCompleted` was false; no funds were spent. Prices and availability must be refreshed for each run.
 
@@ -12,7 +12,7 @@ Version 0.3.0 passes all 33 tests on official stock Hermes 0.23.0 and the person
 
 ## Setup
 
-The package accepts Hermes 0.21.5+ and checks for the public `call_mcp` and persistent-state APIs before a tool performs product work. The contract and storage tests passed on the personal runtime reporting 0.21.5 as well as official stock 0.23.0. The 0.21.5 check covers that installed build; no matching official release tag was available for a separate source comparison. Official 0.23.0 remains the release used for live product acceptance.
+The package accepts Hermes 0.21.5+ and requires the native `register_system_prompt_section`, `call_mcp` and persistent-state APIs. The contract and storage tests passed on the personal runtime reporting 0.21.5 as well as official stock 0.23.0. The 0.21.5 check covers that installed build; no matching official release tag was available for a separate source comparison. Official 0.23.0 remains the release used for live product acceptance.
 
 For Telegram or Discord, install Pepper and configure its MCP connection in the profile that already serves those channels. Add `pepper` and `parlaytix-prod` to that channel's existing toolsets when it uses an explicit toolset list. Preserve its current tools, bot identity and access controls. A separate development profile does not make Pepper available to the existing bot. Hermes owns channel delivery and native approval prompts; the plugin neither creates a chatbot nor starts a messaging adapter.
 
@@ -67,7 +67,7 @@ If Hermes runs inside a container, its callback listener binds **the container's
 
 If the connection has an explicit tool include-list, preserve its entries and add `list_my_ticket_inventory`, `list_my_ticket_assets`, `search_ticket_split_questions`, `preview_ticket_split`, `create_ticket_split` and `get_ticket_split`. These are fixed product tools; do not grant an arbitrary passthrough.
 
-Start a new Hermes chat after setup. Ask: “Use Pepper. Show tickets I own that I can parlay.” Choose an eligible ticket and deciding question; review both outcomes before accepting the split. When returning, ask “Resume my Pepper parlay.” For the existing buyer flow, ask “Use Pepper to find fan tickets for [event]” and accept the exact selected conditional offer before requesting its wallet review.
+Start a new Hermes chat after setup or this upgrade so it receives Pepper’s native prompt section. Say **“parlay this”**. Answer the ownership question, choose an eligible ticket and deciding question, then review both outcomes before accepting the split. You do not need to name Pepper or supply internal IDs. When returning, ask “Resume my Pepper parlay.” For the existing buyer flow, ask “Use Pepper to find fan tickets for [event]” and accept the exact selected conditional offer before requesting its wallet review.
 
 If the normal connection test reports `OAUTH_CLIENT_NOT_ALLOWED`, sign-in may already have completed: the protected resource is refusing the client. The platform owner must admit the exact Hermes identity in both `PUBLIC_MCP_OAUTH_CANARY_ALLOWLIST_JSON` and `MCP_OAUTH_CANARY_ALLOWLIST_JSON`, preserving existing entries and fields. Do not change client identity, enable DCR or repeat login to fix a server allowlist. Let Hermes refresh its existing credentials and retest after admission.
 
@@ -75,6 +75,7 @@ If the normal connection test reports `OAUTH_CLIENT_NOT_ALLOWED`, sign-in may al
 
 | Tool | Behavior |
 | --- | --- |
+| `pepper_start` | Start the guided ownership/find-ticket conversation without product calls or state changes |
 | `pepper_connection` | Read the current account and granted permissions |
 | `pepper_find` | Explicit-query event search and listing candidates, preserving coverage |
 | `pepper_select` | Fetch a ticket and save its terms for the verified account/profile |

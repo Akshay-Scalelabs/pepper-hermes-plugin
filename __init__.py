@@ -11,6 +11,31 @@ from uuid import uuid4
 
 SERVER = "parlaytix-prod"
 
+JOURNEY_PROMPT = """Pepper handles ticket requests inside this existing Hermes conversation.
+When the user says 'parlay this', or asks to conditionalize/fractionalize a ticket, call pepper_start.
+They do not need to name Pepper, tools, ticket IDs or a deciding game. Ask one short question at a time;
+skip details they already supplied. Fractionalizing here means two complementary outcome rights over
+one ticket, not percentage shares or two seats.
+If they have a ticket, use pepper_owned, match their actual owned ticket and ask which to use if unclear.
+Use pepper_questions to offer eligible deciding games; ask what outcome they want to keep. If they need
+a ticket, ask the event/date and budget, then use pepper_find and the existing buyer review flow.
+Use pepper_parlay to show both rights and the separate attended/deciding events with cancellation rules.
+Refresh stale terms. Ask for explicit confirmation of the displayed split and kept outcome before
+pepper_split; 'parlay this' alone never confirms issuance. Resume pending work with pepper_parlay_status.
+After confirmed issuance, ask whether to list the other side and at what price. pepper_offer supplies
+its wallet review page; the user enters the price and confirms there. Verify the actual listing with
+pepper_parlay_status. A prepared link is not a listing, and a listing is not a sale.
+Do not invent ownership, odds, verification, outcomes or background work. Respect native approvals."""
+
+
+def _start(ctx, args):
+    return {"ok": True, "stage": "choose_ticket_path",
+            "question": "Perfect. Do you already have a ticket you'd like to split into two outcome rights, or would you like to find one?",
+            "choices": [{"intent": "owned_ticket", "label": "I have a ticket", "nextTool": "pepper_owned"},
+                        {"intent": "find_ticket", "label": "Find a ticket", "nextTool": "pepper_find",
+                         "followUp": "Which event would you like to attend, and what's your budget?"}],
+            "nextStep": "Ask the opening question unless the user already answered it. Follow their intent one question at a time. Check actual inventory before selecting an owned ticket. Never invent backing or treat this opening as confirmation to split or list."}
+
 
 class Refusal(Exception):
     """A bounded, public explanation; never contains upstream exception text."""
@@ -557,7 +582,9 @@ def _parlay_forget(ctx, args):
 
 
 def register(ctx):
+    ctx.register_system_prompt_section("pepper.journey", JOURNEY_PROMPT, max_chars=2200)
     definitions = [
+        ("pepper_start", "Start the guided ticket journey when the user says 'parlay this', conditionalize, or fractionalize. Ask about ticket ownership first; no IDs, sign-in or product writes needed.", _start, {}, []),
         ("pepper_connection", "Check ParlayTix connection and granted permissions.", _connection, {}, []),
         ("pepper_find", "Find real event and fan-ticket listing candidates using an explicit query.", _find,
          {"query": {"type": "string", "minLength": 3, "maxLength": 120},

@@ -1,6 +1,6 @@
 ---
 name: pepper
-description: Parlay an owned verified ticket into complementary rights, keep one outcome, and review an offer for the other through the customer's wallet.
+description: Start when the user says “parlay this,” conditionalize, or fractionalize a ticket. Guide ticket selection, complementary outcome rights, and wallet review for listing the other side.
 ---
 
 # Pepper for ParlayTix
@@ -8,6 +8,8 @@ description: Parlay an owned verified ticket into complementary rights, keep one
 Pepper is a native Hermes plugin for the ParlayTix protocol. Use its tools within the user's existing Hermes conversation, including Telegram or Discord. Keep the existing assistant's identity and voice.
 
 ## Parlay this — owned tickets
+
+When the user says **“parlay this”**, call `pepper_start`. They need not name the plugin or know any IDs. Ask: “Perfect. Do you already have a ticket you'd like to split into two outcome rights, or would you like to find one?” Ask one short follow-up at a time and skip questions already answered. Conditionalizing/fractionalizing here means two complementary rights over one ticket, not percentage ownership or extra seats. For an owned ticket, proceed below; if they need one, ask event/date and budget, then use the existing-offer flow. A ticket they mention or upload still needs real ownership and verification; never manufacture it. If a previous split is pending, resume its status instead of starting another.
 
 1. Start with `pepper_connection` and `pepper_owned`. Match the user's ticket by exact event/date/seat and collateral ID. `eligibleForSplit=true` allows discovery and preview; `canSplit` separately reports current creation admission. A verified, unsplit whole ticket is required; an existing Base fan ticket cannot be re-split. An empty inventory or disabled holder capability is not permission to use the company's ticket, create a demo asset or manufacture backing.
 2. Use `pepper_questions` for that ticket. Show eligible binary deciding questions separately from the event the ticket admits. For an event containing multiple questions, call it again with the returned eventId to obtain exact condition IDs. Do not invent IDs, market prices or ticket-price forecasts. This version's Pepper composer uses Polymarket source identities.

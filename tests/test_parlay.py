@@ -38,6 +38,17 @@ def confirmed(d):
 
 
 class ParlayTests(unittest.TestCase):
+    def test_short_entry_needs_no_account_read_and_preserves_an_existing_draft(self):
+        h = host(); draft(h); before = copy.deepcopy(h.state.values)
+        h.calls.clear()
+        h.responses['get_connection_permissions'] = RuntimeError('not signed in')
+        result = h.run('pepper_start')
+        self.assertTrue(result['ok'])
+        self.assertEqual(result['stage'], 'choose_ticket_path')
+        self.assertEqual([choice['nextTool'] for choice in result['choices']], ['pepper_owned', 'pepper_find'])
+        self.assertEqual(h.call_names(), [])
+        self.assertEqual(h.state.values, before)
+
     def test_disabled_issuance_and_corrupt_state_refuse_without_writes(self):
         h = host(); d = draft(h)
         h.responses["preview_ticket_split"]["splitEnabled"] = False

@@ -63,11 +63,15 @@ class Host:
         self.form = form
         self.calls = []
         self.tools = {}
+        self.prompt_sections = {}
         self.state = state if state is not None else MemoryState()
         pepper.register(self)
 
     def register_tool(self, **definition):
         self.tools[definition["name"]] = definition["handler"]
+
+    def register_system_prompt_section(self, section_id, content, **options):
+        self.prompt_sections[section_id] = content
 
     def call_mcp(self, server, tool, arguments, timeout):
         self.calls.append((server, tool, arguments))
@@ -100,6 +104,7 @@ class PluginTests(unittest.TestCase):
             SimpleNamespace(call_mcp=lambda *args: calls.append(args), state=object()),
         ):
             registered = {}
+            context.register_system_prompt_section = lambda *args, **kwargs: None
             context.register_tool = lambda **tool: registered.update({tool["name"]: tool["handler"]})
             pepper.register(context)
             result = json.loads(registered["pepper_connection"]({}))
