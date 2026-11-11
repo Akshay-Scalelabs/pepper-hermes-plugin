@@ -109,7 +109,7 @@ The account-bound Parlay record stores one current draft: exact ticket/source id
 
 `pepper_forget` clears the current account's record after a successful identity check. Other accounts/profiles keep their own selections. Uninstalling a package does not necessarily delete Hermes's plugin-data directory; manage retained plugin data separately if the account can no longer sign in. Resuming never requests a new checkout, changes the saved accepted terms or automatically retries an unknown response.
 
-Explicit stock-Hermes approval denial and reauthentication responses retain their stop instructions through bounded error categories. Unknown responses never authorize automatic retries: inspect product status and connection state first. Raw upstream errors are not returned.
+Explicit stock-Hermes approval denial and reauthentication responses retain their stop instructions through bounded error categories. Unknown responses never authorize automatic retries: inspect product status and connection state first. ParlayTix's public refusal codes (for example `TICKET_ALREADY_FRACTIONALIZED (HTTP 409)`) are recognised by exact match against a fixed list and returned as that code with a fixed sentence. A split refused before anything was written, or one ParlayTix never recorded, returns the draft to a preview that can be confirmed again under the same request key or forgotten. Raw upstream errors are not returned.
 
 ## Verification
 
