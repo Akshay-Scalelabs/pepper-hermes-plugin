@@ -23,7 +23,7 @@ Use pepper_parlay to show both rights and the separate attended/deciding events 
 Refresh stale terms. Ask for explicit confirmation of the displayed split and kept outcome before
 pepper_split; 'parlay this' alone never confirms issuance. Resume pending work with pepper_parlay_status.
 After confirmed issuance, ask whether to list the other side and at what price. pepper_offer supplies
-its wallet review page; the user enters the price and confirms there. Verify the actual listing with
+the ParlayTix review, already at that price when possible; the user confirms there. Verify the actual listing with
 pepper_parlay_status. A prepared link is not a listing, and a listing is not a sale.
 If nothing fits their budget, offer a Scout watch: pepper_watch saves a draft from the matched event, total cap,
 ticket count, deadline and whether to tell them, check first or just buy. Confirm the terms before
@@ -70,6 +70,10 @@ REFUSALS = {
     "NFT_LISTING_UNAVAILABLE": "This offer is no longer for sale.",
     "NFT_OWN_LISTING": "This is the user's own listing.",
     "NFT_TRADING_CLOSED": "Trading on this ticket has closed.",
+    "NFT_NOT_CARD_HOLDER": "This account's wallet does not hold that right, so it cannot list it.",
+    "NFT_CARD_NOT_FOUND": "ParlayTix found no such right to list.",
+    "NFT_PRICE_INVALID": "ParlayTix refused that asking price. Choose a whole number of cents above zero.",
+    "NFT_OPERATION_UNRESOLVED": "An earlier listing attempt on this right is still being checked. Wait for it to settle before preparing another.",
     "SCOUT_INTENT_NOT_FOUND": "ParlayTix found no such watch in this account.",
     "SCOUT_INTENT_INVALID_TRANSITION": "The watch is not in a state that allows this. Read pepper_watches for its actual status.",
     "SCOUT_INTENT_WRITE_INPUT_INVALID": "ParlayTix refused these watch terms. Check the event, a deadline before the event starts, and the totals.",
@@ -448,7 +452,10 @@ def _holder_preview(data):
         sides.append({**_fields(outcome, ("outcome", "label", "description", "resolutionRules", "resolutionAt", "resolutionTimeKind", "observedAt", "freshness")),
                       "outcomeId": _text(outcome.get("outcomeId"), "outcomeId"),
                       "probability": outcome.get("probability") if outcome.get("freshness") == "fresh"
-                      and type(outcome.get("probability")) in (int, float) and 0 <= outcome["probability"] <= 1 else None})
+                      and type(outcome.get("probability")) in (int, float) and 0 <= outcome["probability"] <= 1 else None,
+                      # ParlayTix's own starting suggestion (face value times this outcome's chance); never a forecast.
+                      "suggestedAsk": f"{outcome['suggestedAsk']:.2f}" if outcome.get("freshness") == "fresh"
+                      and type(outcome.get("suggestedAsk")) in (int, float) and 0 < outcome["suggestedAsk"] <= 1000000 else None})
     if len({side["outcomeId"] for side in sides}) != 2 or any(not side["resolutionRules"] or not side["resolutionAt"] for side in sides):
         raise Refusal("The split needs distinct outcomes with source rules and resolution timing.", "SPLIT_UNAVAILABLE")
     ticket = _fields(data.get("ticket"), ("collateralId", "canonicalEventKey", "eventName", "eventDate", "venue", "section", "row", "seat", "backingClass"))
@@ -459,7 +466,7 @@ def _holder_preview(data):
 
 
 def _split_terms(preview):
-    return {**{k: v for k, v in preview.items() if k != "splitEnabled"}, "outcomes": [{k: v for k, v in side.items() if k not in ("probability", "observedAt", "freshness")}
+    return {**{k: v for k, v in preview.items() if k != "splitEnabled"}, "outcomes": [{k: v for k, v in side.items() if k not in ("probability", "observedAt", "freshness", "suggestedAsk")}
                                     for side in preview["outcomes"]]}
 
 
@@ -494,6 +501,8 @@ def _questions(ctx, args):
 def _parlay(ctx, args):
     account = _account(ctx)
     prior = _parlay_state(ctx, account)
+    if prior and prior.get("phase") in ("ready", "failed"):
+        raise Refusal("Pepper keeps one Parlay draft per account, and a finished one is still saved. Ask the user whether to clear it with pepper_parlay_forget (its rights and listings stay on ParlayTix), then preview again.", "PARLAY_DRAFT_EXISTS")
     if prior and prior.get("phase") != "preview":
         raise Refusal("An existing Parlay request needs attention. Read pepper_parlay_status before starting another.", "PARLAY_PENDING")
     source = {"collateralId": _text(args.get("collateralId"), "collateralId"), "eventId": _text(args.get("eventId"), "eventId")}
@@ -601,6 +610,38 @@ def _parlay_status(ctx, args):
     return _parlay_status_for(ctx, account, saved)
 
 
+def _card_page(url, claim_id, operation=None):
+    """A ParlayTix card page for exactly this right; with `operation`, the page that opens that prepared listing."""
+    try:
+        parsed = urlsplit(url) if isinstance(url, str) else None
+    except ValueError:
+        return False
+    return bool(parsed and parsed.scheme == "https" and parsed.netloc in ("parlaytix.xyz", "www.parlaytix.xyz")
+                and parsed.path == "/claims/" + quote(claim_id, safe="") and not parsed.fragment
+                and parsed.query == ("operation=" + operation if operation else ""))
+
+
+def _prepared_listing(ctx, claim_id, cents, draft_id):
+    """Ask ParlayTix to prepare the holder's own listing at this price. Returns its link and operation, or None when the
+    connection or server cannot prepare one, in which case the user types the price on the card page as before."""
+    try:
+        # One intent per draft and price: a retry replays the same prepared operation, a new price prepares a new one.
+        data = _call(ctx, "prepare_ticket_listing", {"claimId": claim_id, "priceCents": cents,
+                                                     "intentId": f"pepper-{draft_id}-{cents}"})
+    except Refusal as error:
+        if error.code != "RESULT_UNKNOWN":
+            raise
+        return None
+    handoff = data.get("handoff")
+    operation = handoff.get("operationId") if isinstance(handoff, dict) else None
+    if (data.get("claimId") != claim_id or data.get("priceCents") != cents or data.get("listingCreated") is not False
+            or not isinstance(operation, str) or not re.fullmatch(r"0x[0-9a-f]{64}", operation)
+            or handoff.get("claimId") != claim_id or handoff.get("action") != "list"
+            or not _card_page(data.get("confirmUrl"), claim_id, operation)):
+        raise Refusal("ParlayTix did not return a listing review for this right and price. Nothing was listed.", "LISTING_UNAVAILABLE")
+    return {"reviewUrl": data["confirmUrl"], "operationId": operation}
+
+
 def _offer(ctx, args):
     account = _account(ctx)
     saved = _parlay_state(ctx, account)
@@ -616,14 +657,19 @@ def _offer(ctx, args):
     if asset.get("isOwner") is not True or "list" not in asset.get("nft", {}).get("actions", []):
         raise Refusal("Your wallet cannot currently list the other right. Inspect its actual status.", "LISTING_UNAVAILABLE")
     claim_id = _text(asset.get("claimId"), "claimId")
+    prepared = _prepared_listing(ctx, claim_id, int(price * 100), saved["draftId"])
+    _same_account(ctx, account)
+    page = asset.get("pageUrl") if _card_page(asset.get("pageUrl"), claim_id) else "https://parlaytix.xyz/claims/" + quote(claim_id, safe="")
     offer = {"claimId": claim_id, "askingPrice": str(price), "termsHash": _text(asset.get("nft", {}).get("termsHash"), "termsHash"),
-             "reviewUrl": "https://parlaytix.xyz/claims/" + quote(claim_id, safe="")}
+             "reviewUrl": page, "pricePrefilled": False, **({**prepared, "pricePrefilled": True} if prepared else {})}
     saved = _parlay_state(ctx, account)
     if not saved or saved["draftId"] != args["draftId"]:
         raise Refusal("The active Parlay draft changed. Resume it before reviewing an offer.", "PARLAY_DRAFT_REQUIRED")
     _parlay_state(ctx, account, {**saved, "offer": offer}, write=True)
     return {"ok": True, "offer": offer, "keptOutcomeId": saved["keepOutcomeId"], "listingCreated": False,
-            "nextStep": "Open this right on ParlayTix, enter this asking price, review the displayed fee and proceeds, and confirm listing in your wallet. The link does not prefill a price or sign anything. Then use pepper_parlay_status to verify the actual listing."}
+            "nextStep": ("Present reviewUrl as 'Review on ParlayTix'. Signed in to the same account, the user sees the sell review already at this asking price, checks the displayed fee and proceeds, and confirms. Nothing is listed or signed until they do."
+                         if prepared else "Open this right on ParlayTix, enter this asking price, review the displayed fee and proceeds, and confirm listing in your wallet. The link does not prefill a price or sign anything.")
+                        + " Then use pepper_parlay_status to verify the actual listing. A listing is not a sale."}
 
 
 def _parlay_forget(ctx, args):
@@ -773,7 +819,7 @@ def register(ctx):
         ("pepper_split", "Create the exact reviewed split only after the user's explicit confirmation and chosen keep outcome. Subsequent calls only read status.", _split,
          {"draftId": {"type": "string"}, "keepOutcomeId": {"type": "string"}, "confirmed": {"type": "boolean"}}, ["draftId", "keepOutcomeId", "confirmed"]),
         ("pepper_parlay_status", "Resume the saved Parlay draft or read its confirmed rights and actual listing. Recovers a lost creation response without resubmitting.", _parlay_status, {}, []),
-        ("pepper_offer", "Save a proposed asking price and return wallet review for the other right. Preserves the chosen keep outcome; creates no listing.", _offer,
+        ("pepper_offer", "Save a proposed asking price and return the ParlayTix review for the other right, already at that price when ParlayTix can prepare it. Preserves the chosen keep outcome; creates no listing.", _offer,
          {"draftId": {"type": "string"}, "askingPrice": {"type": "string", "description": "User-chosen price in USD/USDC units, at most two decimal places."}}, ["draftId", "askingPrice"]),
         ("pepper_parlay_forget", "Clear the exact local Parlay draft on request after preview or completed issuance. Does not cancel rights or listings; pending recovery records cannot be cleared.", _parlay_forget,
          {"draftId": {"type": "string"}, "confirmed": {"type": "boolean"}}, ["draftId", "confirmed"]),

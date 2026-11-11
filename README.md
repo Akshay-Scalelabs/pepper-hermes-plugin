@@ -4,7 +4,7 @@ Say **“parlay this”** to the Hermes assistant you already use. With a verifi
 
 ## Install
 
-Run the install on the host and Hermes profile that serve your chat. Pepper 0.4.0 has been tested on stock Hermes 0.23.0.
+Run the install on the host and Hermes profile that serve your chat. Pepper 0.4.0 was tested on stock Hermes 0.23.0. Version 0.5.0 adds Scout watches, named refusals and the listing handoff; it has run only against the synthetic test suite, not yet on Hermes.
 
 ```sh
 hermes plugins install Akshay-Scalelabs/pepper-hermes-plugin --enable
@@ -69,7 +69,7 @@ Replace the placeholders with the observed port and confirmed personal host. Do 
 
 If Hermes runs inside a container, its callback listener binds **the container's loopback interface**. SSH forwarding to the VPS host's loopback, or to the container IP alone, does not reach that listener. Establish an isolated forward into the container network namespace and its loopback listener, then tunnel that host-side forward over SSH. Verify this path before consent; do not expose the callback port publicly or change the unrelated project's container networking.
 
-If the connection has an explicit tool include-list, preserve its entries and add `list_my_ticket_inventory`, `list_my_ticket_assets`, `search_ticket_split_questions`, `preview_ticket_split`, `create_ticket_split` and `get_ticket_split`. These are fixed product tools; do not grant an arbitrary passthrough.
+If the connection has an explicit tool include-list, preserve its entries and add every tool Pepper calls. Identity and the buyer flow use `get_connection_permissions`, `search_ticket_events`, `search_ticket_listings`, `get_ticket_asset`, `create_ticket_checkout` and `get_ticket_checkout`. The holder flow uses `list_my_ticket_inventory`, `list_my_ticket_assets`, `search_ticket_split_questions`, `preview_ticket_split`, `create_ticket_split`, `get_ticket_split` and `prepare_ticket_listing`. These are fixed product tools; do not grant an arbitrary passthrough.
 
 **Scout watches.** A watch asks ParlayTix to look for tickets to one event under a total price. It needs the separate Scout read and Scout write consents, granted under AI agents in ParlayTix; the ticket permissions do not cover it. With an explicit include-list, also add `list_scout_intents`, `get_scout_intent`, `create_scout_intent`, `activate_scout_intent`, `pause_scout_intent`, `resume_scout_intent`, `cancel_scout_intent` and `respond_to_scout_intent_approval`. Pepper saves a draft, activates it only after you confirm, and never pays: a paid step returns a ParlayTix payment page. Pepper sends no notifications, so ask “any news on my watch?” to read its stored state. Editing a watch's terms and funding from your own XP account are not available here.
 
@@ -94,7 +94,7 @@ If the connection test reports `OAUTH_CLIENT_NOT_ALLOWED` after sign-in, contact
 | `pepper_parlay` | Save the exact two-outcome preview without issuing rights |
 | `pepper_split` | Refresh accepted terms, save the request key, then submit the explicitly confirmed split |
 | `pepper_parlay_status` | Recover/resume the same request and check minted rights and actual listing |
-| `pepper_offer` | Save the other right's proposed ask and return its wallet review page |
+| `pepper_offer` | Save the other right's proposed ask and return its ParlayTix review, already at that price when the server can prepare it |
 | `pepper_parlay_forget` | Clear a preview or completed local draft without cancelling product state |
 | `pepper_watches` | Read your Scout watches, or one watch with its pending approval |
 | `pepper_watch` | Save a draft watch for one event: tickets, total cap, deadline and approval mode |
@@ -103,7 +103,7 @@ If the connection test reports `OAUTH_CLIENT_NOT_ALLOWED` after sign-in, contact
 
 The plugin uses documented `ctx.call_mcp`, so Hermes owns OAuth, credentials, refresh, transport and approvals. It makes requests only to the configured `parlaytix-prod` server and does not expose an arbitrary tool passthrough. It reads no credential files, runs no shell commands, starts no background work, and sends no telemetry. Responses are treated as untrusted data. Confirmed holder splitting creates real rights through the existing issuer. Preview, status and listing-review preparation do not sign or spend from the customer's wallet.
 
-The account-bound Parlay record stores one current draft: exact ticket/source identities, outcome rules, preview hashes, chosen keep outcome, stable request key, split ID and proposed offer. It contains no credentials or wallet signing payload. A lost write response keeps that request key for read-only recovery. An explicit listing review opens the existing card page: the user enters the price there and reviews fees before signing. Pepper verifies the resulting listing against the saved ask; it does not equate a listing with a sale.
+The account-bound Parlay record stores one current draft: exact ticket/source identities, outcome rules, preview hashes, chosen keep outcome, stable request key, split ID and proposed offer. It contains no credentials or wallet signing payload. A lost write response keeps that request key for read-only recovery. An explicit listing review asks ParlayTix to prepare the holder's own listing at the agreed price (`prepare_ticket_listing`) and returns its link: signed in to the same account, the user sees the sell review already at that price, reviews fees and confirms. Pepper accepts that link only for the exact right, price and prepared operation on `parlaytix.xyz`. When the server cannot prepare it, the link is the plain card page and the user enters the price there. The preview's `suggestedAsk` is ParlayTix's starting suggestion (the ticket's face value times that outcome's chance when previewed), not a forecast. Pepper keeps one Parlay draft per account: clear a finished one with `pepper_parlay_forget` before starting another. Pepper verifies the resulting listing against the saved ask; it does not equate a listing with a sale.
 
 `ctx.state` stores one selected ticket per ParlayTix account under the active Hermes profile's plugin-data directory. Stored data includes the account ID, generated selection ID, selected/read timestamps and a bounded projection of the ticket, condition, listing, deadlines and market observation. It excludes credentials, raw wallet payloads and checkout receipts. Hermes writes this JSON atomically with mode `0600`. These local records are not encrypted by Pepper; the profile's owner can read them. Pepper checks live account identity and ticket permissions before restoring a record and rechecks identity after the product reads. Revoked access cannot fall back to an offline saved card. Local selection state is not authoritative proof of price, inventory, a running watch or ownership.
 
