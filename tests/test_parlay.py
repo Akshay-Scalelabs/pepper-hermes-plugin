@@ -114,6 +114,8 @@ class ParlayTests(unittest.TestCase):
         h = host(); d = draft(h); h.run("pepper_split", confirmed(d))
         result = h.run("pepper_offer", {"draftId": d["draftId"], "askingPrice": "25.00"})
         self.assertEqual(result["offer"]["reviewUrl"], "https://parlaytix.xyz/claims/claim_NO")
+        self.assertFalse(result["offer"]["pricePrefilled"])
+        self.assertIn("enter this asking price", result["nextStep"])
         self.assertEqual(result["keptOutcomeId"], "condition:YES")
         self.assertFalse(result["listingCreated"])
         self.assertFalse(h.run("pepper_parlay_status")["listingObserved"])
@@ -123,7 +125,7 @@ class ParlayTests(unittest.TestCase):
         self.assertFalse(result["listingMatchesDraft"])
         h.responses["get_ticket_split"]["assets"][1]["listing"]["price"] = 25
         self.assertTrue(h.run("pepper_parlay_status")["listingMatchesDraft"])
-        self.assertEqual(set(h.call_names()) - {"get_connection_permissions", "preview_ticket_split", "create_ticket_split", "get_ticket_split"}, set())
+        self.assertEqual(set(h.call_names()) - {"get_connection_permissions", "preview_ticket_split", "create_ticket_split", "get_ticket_split", "prepare_ticket_listing"}, set())
 
     def test_wrong_or_missing_rights_never_count_as_a_completed_split(self):
         for change in ["root", "outcome", "mint", "count"]:
@@ -212,6 +214,78 @@ class ParlayTests(unittest.TestCase):
         h.run("pepper_split", confirmed(d))
         self.assertIn("failed", h.run("pepper_parlay_status")["nextStep"])
         self.assertTrue(h.run("pepper_parlay_forget", {"draftId": d["draftId"], "confirmed": True})["ok"])
+
+    def prepared(self, **changes):
+        operation = "0x" + "c" * 64
+        return {"claimId": "claim_NO", "priceCents": 2500, "cardUrl": "/claims/claim_NO", "status": "pending", "listingCreated": False,
+                "confirmUrl": "https://parlaytix.xyz/claims/claim_NO?operation=" + operation,
+                "handoff": {"action": "list", "claimId": "claim_NO", "operationId": operation, "confirmIn": "app", "ownerBound": True}, **changes}
+
+    def test_offer_hands_over_a_review_already_at_the_agreed_price(self):
+        h = host(); d = draft(h); h.run("pepper_split", confirmed(d))
+        h.responses["prepare_ticket_listing"] = self.prepared()
+        result = h.run("pepper_offer", {"draftId": d["draftId"], "askingPrice": "25.00"})
+        self.assertTrue(result["ok"], result)
+        self.assertEqual(result["offer"]["reviewUrl"], self.prepared()["confirmUrl"])
+        self.assertTrue(result["offer"]["pricePrefilled"])
+        self.assertFalse(result["listingCreated"])
+        self.assertIn("already at this asking price", result["nextStep"])
+        h.run("pepper_offer", {"draftId": d["draftId"], "askingPrice": "25"})
+        h.responses["prepare_ticket_listing"] = self.prepared(priceCents=3000)
+        h.run("pepper_offer", {"draftId": d["draftId"], "askingPrice": "30"})
+        sent = [args for _, tool, args in h.calls if tool == "prepare_ticket_listing"]
+        self.assertEqual(sent[0], {"claimId": "claim_NO", "priceCents": 2500, "intentId": f"pepper-{d['draftId']}-2500"})
+        self.assertEqual(sent[1], sent[0])
+        self.assertEqual(sent[2]["intentId"], f"pepper-{d['draftId']}-3000")
+
+    def test_offer_refuses_a_review_for_another_right_price_or_site(self):
+        operation = "0x" + "c" * 64
+        for changes in ({"priceCents": 2600}, {"claimId": "claim_YES"}, {"listingCreated": True},
+                        {"confirmUrl": "https://parlaytix.xyz.evil.example/claims/claim_NO?operation=" + operation},
+                        {"confirmUrl": "https://parlaytix.xyz/claims/claim_NO?operation=0x" + "d" * 64},
+                        {"confirmUrl": "https://parlaytix.xyz/claims/claim_YES?operation=" + operation},
+                        {"handoff": {"action": "buy", "claimId": "claim_NO", "operationId": operation}}):
+            h = host(); d = draft(h); h.run("pepper_split", confirmed(d))
+            h.responses["prepare_ticket_listing"] = self.prepared(**changes)
+            self.assertEqual(h.run("pepper_offer", {"draftId": d["draftId"], "askingPrice": "25"})["code"], "LISTING_UNAVAILABLE", changes)
+            self.assertIsNone(h.run("pepper_parlay_status")["draft"]["offer"])
+
+    def test_offer_stops_on_a_definite_refusal_or_denied_approval(self):
+        denial = "The user did not approve running write-capable MCP tool 'prepare_ticket_listing' on untrusted server 'parlaytix-prod'. The command was NOT run. Do not retry without explicit user direction."
+        for error, code in (("NFT_NOT_CARD_HOLDER (HTTP 409)", "NFT_NOT_CARD_HOLDER"), ("NFT_TRADING_CLOSED (HTTP 409)", "NFT_TRADING_CLOSED"),
+                            (denial, "APPROVAL_DENIED")):
+            h = host(); d = draft(h); h.run("pepper_split", confirmed(d))
+            h.responses["prepare_ticket_listing"] = {"ok": False, "error": error}
+            refused = h.run("pepper_offer", {"draftId": d["draftId"], "askingPrice": "25"})
+            self.assertEqual(refused["code"], code)
+            self.assertNotIn("reviewUrl", str(refused))
+
+    def test_plain_link_prefers_the_card_page_parlaytix_returned(self):
+        for page, expected in (("https://www.parlaytix.xyz/claims/claim_NO", "https://www.parlaytix.xyz/claims/claim_NO"),
+                               ("https://evil.example/claims/claim_NO", "https://parlaytix.xyz/claims/claim_NO"),
+                               ("https://parlaytix.xyz/claims/claim_YES", "https://parlaytix.xyz/claims/claim_NO")):
+            h = host(); d = draft(h); h.run("pepper_split", confirmed(d))
+            h.responses["get_ticket_split"]["assets"][1]["pageUrl"] = page
+            self.assertEqual(h.run("pepper_offer", {"draftId": d["draftId"], "askingPrice": "25"})["offer"]["reviewUrl"], expected)
+
+    def test_suggested_ask_is_shown_but_is_not_an_accepted_term(self):
+        h = host()
+        for outcome, ask in zip(h.responses["preview_ticket_split"]["outcomes"], (120.0, 80.004)):
+            outcome["suggestedAsk"] = ask
+        d = draft(h)
+        self.assertEqual([side["suggestedAsk"] for side in d["preview"]["outcomes"]], ["120.00", "80.00"])
+        h.responses["preview_ticket_split"]["outcomes"][0]["suggestedAsk"] = 95
+        self.assertFalse(h.run("pepper_parlay_status")["termsChanged"])
+        self.assertTrue(h.run("pepper_split", confirmed(d))["ok"])
+        stale = host()
+        stale.responses["preview_ticket_split"]["outcomes"][0].update(suggestedAsk=120, freshness="stale")
+        self.assertIsNone(draft(stale)["preview"]["outcomes"][0]["suggestedAsk"])
+
+    def test_a_finished_draft_says_how_to_start_another(self):
+        h = host(); d = draft(h); h.run("pepper_split", confirmed(d)); h.run("pepper_parlay_status")
+        refused = h.run("pepper_parlay", {"collateralId": "another", "eventId": "123"})
+        self.assertEqual(refused["code"], "PARLAY_DRAFT_EXISTS")
+        self.assertIn("pepper_parlay_forget", refused["error"])
 
 
 if __name__ == "__main__":
