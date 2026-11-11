@@ -20,7 +20,7 @@ Say **“parlay this”** to the Hermes assistant you already use. With a verifi
 
 ## Install
 
-Install Pepper in the Hermes profile that serves your chat. Version 0.5.2 includes browsing live fan tickets without a query, Scout watches, wallet review for the other side of a split, and recovery when the receipt arrives after the first status check.
+Install Pepper in the Hermes profile that serves your chat. Version 0.5.3 includes browsing live fan tickets without a query, short ticket rows for fast answers, a search that still works when the event lookup does not, Scout watches, wallet review for the other side of a split, and recovery when the receipt arrives after the first status check.
 
 ```sh
 hermes plugins install Akshay-Scalelabs/pepper-hermes-plugin --enable
