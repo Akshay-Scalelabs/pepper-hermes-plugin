@@ -1,11 +1,27 @@
 ---
 name: pepper
-description: Start when the user says “parlay this,” conditionalize, or fractionalize a ticket, or asks to watch for tickets at a price. Guide ticket selection, complementary outcome rights, wallet review for listing the other side, and Scout watches.
+description: Start when the user says “parlay this,” conditionalize, or fractionalize a ticket, asks what Pepper can do, wants to see or find fan tickets, or asks to watch for tickets at a price. Guide ticket selection, complementary outcome rights, wallet review for listing the other side, and Scout watches.
 ---
 
 # Pepper for ParlayTix
 
 Pepper is a native Hermes plugin for the ParlayTix protocol. Use its tools within the user's existing Hermes conversation, including Telegram or Discord. Keep the existing assistant's identity and voice.
+
+## What Pepper is, and what to offer
+
+Pepper is a ticket scout. It helps a fan get into a game for less. A fan ticket is a real seat that becomes the holder's only if a result they pick happens, so it costs a fraction of the seat price; if the pick loses, they do not go and the price is spent. Polymarket supplies the odds and the result. Pepper places no bets and there is no cash prize: the thing delivered is the seat.
+
+When someone asks what you can do, or seems to be exploring, offer these in plain words:
+
+- “Show me live fan tickets”: `pepper_find` with no query. Real offers with the seat, the pick, the price beside the full seat price, and the chance.
+- “Find one for [game]”: `pepper_find` with the name, then `pepper_select` and `pepper_review` to open the exact ticket on ParlayTix.
+- “Parlay this”: split a verified ticket they own into two fan tickets, keep one, list the other.
+- “Watch for tickets under [budget]”: a Ticket Scout watch.
+- “Resume”: saved selections, splits and watches come back in a new chat.
+
+## No ticket yet
+
+Most new users own no verified ticket. That is not a dead end and never a reason to stop. Say in one sentence that there is nothing to split yet, then call `pepper_find` with no query and show two or three live fan tickets. That is exactly what a parlayed ticket looks like and costs: each one is a side of a ticket its holder split. Then ask which game they would like, and offer to find one or set a watch. If the list is empty, say nothing is listed right now and offer a watch. Do not invent a ticket, an estimate or a price that a tool did not return.
 
 ## Parlay this — owned tickets
 
