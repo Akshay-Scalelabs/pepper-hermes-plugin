@@ -25,6 +25,8 @@ pepper_split; 'parlay this' alone never confirms issuance. Resume pending work w
 After confirmed issuance, ask whether to list the other side and at what price. pepper_offer supplies
 the ParlayTix review, already at that price when possible; the user confirms there. Verify the actual listing with
 pepper_parlay_status. A prepared link is not a listing, and a listing is not a sale.
+No ticket is not a dead end: pepper_find with no query shows live fan tickets, which is what a parlayed
+ticket looks like and costs; then offer to find one for their game.
 If nothing fits their budget, offer a Scout watch: pepper_watch saves a draft from the matched event, total cap,
 ticket count, deadline and whether to tell them, check first or just buy. Confirm the terms before
 pepper_watch_control activates it. Pepper sends no updates itself; read pepper_watches when they ask, and
@@ -38,7 +40,13 @@ def _start(ctx, args):
             "choices": [{"intent": "owned_ticket", "label": "I have a ticket", "nextTool": "pepper_owned"},
                         {"intent": "find_ticket", "label": "Find a ticket", "nextTool": "pepper_find",
                          "followUp": "Which event would you like to attend, and what's your budget?"}],
-            "nextStep": "Ask the opening question unless the user already answered it. Follow their intent one question at a time. Check actual inventory before selecting an owned ticket. Never invent backing or treat this opening as confirmation to split or list."}
+            "whatPepperCanDo": [
+                {"say": "show me live fan tickets", "does": "Browses real fan tickets for sale now: a seat that is yours only if a result you pick happens, with its price and the full seat price.", "tool": "pepper_find"},
+                {"say": "find one for the Lakers under $100", "does": "Finds fan tickets for a game and opens the exact one on ParlayTix to review.", "tool": "pepper_find"},
+                {"say": "parlay this", "does": "Splits a verified ticket you own into two fan tickets, one for each result. Keep one and list the other.", "tool": "pepper_owned"},
+                {"say": "watch for two tickets under $300", "does": "Sets a Ticket Scout that watches a game for seats under your budget. Needs the Scout permission in ParlayTix.", "tool": "pepper_watch"},
+                {"say": "resume my Pepper parlay", "does": "Picks up a saved split, offer or watch in a new chat.", "tool": "pepper_parlay_status"}],
+            "nextStep": "Ask the opening question unless the user already answered it. Follow their intent one question at a time. If they are just exploring or have no ticket, call pepper_find with no query and show two or three live fan tickets so they see what a parlayed ticket looks like and costs. Check actual inventory before selecting an owned ticket. Never invent backing or treat this opening as confirmation to split or list."}
 
 
 class Refusal(Exception):
@@ -368,16 +376,23 @@ def _forget(ctx, args):
 
 
 def _find(ctx, args):
+    page = _integer(args.get("page", 1), "page", 1000)
+    if args.get("query") in (None, ""):
+        # Browse: the live fan tickets are the honest picture of what a parlayed ticket costs.
+        listings = _call(ctx, "search_ticket_listings", {"query": "", "page": page})
+        if not isinstance(listings.get("items"), list):
+            raise Refusal("ParlayTix did not return a valid listing page.")
+        return {"ok": True, "browse": True, "listings": listings,
+                "guidance": "These are real fan tickets for sale now. For two or three, show the attended game and seat, the deciding game and pick, the fan ticket price beside the full seat price, and the current chance. Each is one side of a ticket its holder split: the seat is theirs only if that pick wins, otherwise the price is spent. Ask which game they want; pepper_find with that name narrows it, and pepper_select opens one to review. An empty list means nothing is listed right now, not an error."}
     query = _text(args.get("query"), "query", 120)
     if len(query) < 3:
         raise Refusal("Use an explicit event query of at least three characters.")
-    page = _integer(args.get("page", 1), "page", 1000)
     events = _call(ctx, "search_ticket_events", {"query": query})
     listings = _call(ctx, "search_ticket_listings", {"query": query, "page": page})
     if not isinstance(listings.get("items"), list):
         raise Refusal("ParlayTix did not return a valid listing page.")
     return {"ok": True, "events": events, "listings": listings,
-            "guidance": "Match the attended event, date and seat explicitly. Listing matches are candidates, not guaranteed matches. Fan tickets depend on a separate outcome; ask whether conditional attendance is acceptable."}
+            "guidance": "Match the attended event, date and seat explicitly. Listing matches are candidates, not guaranteed matches. Fan tickets depend on a separate outcome; ask whether conditional attendance is acceptable. If no listing matches, say so plainly and offer a Scout watch for that event (pepper_watch) or the live tickets for other games (pepper_find with no query)."}
 
 
 def _review(ctx, args):
@@ -484,8 +499,13 @@ def _owned(ctx, args):
     whole = _call(ctx, "list_my_ticket_inventory", {"page": page})
     held = _call(ctx, "list_my_ticket_assets", {"page": page, "view": "held"})
     _same_account(ctx, account)
-    return {"ok": True, "wholeTickets": whole, "fanTickets": held,
-            "guidance": "A whole ticket with eligibleForSplit=true can be previewed. canSplit and the refreshed preview's splitEnabled control whether creation is currently available. Existing fan tickets cannot be re-split. Never substitute company inventory or invent verified backing."}
+    result = {"ok": True, "wholeTickets": whole, "fanTickets": held,
+              "guidance": "A whole ticket with eligibleForSplit=true can be previewed. canSplit and the refreshed preview's splitEnabled control whether creation is currently available. Existing fan tickets cannot be re-split. Never substitute company inventory or invent verified backing."}
+    if not whole.get("items"):
+        result["nextStep"] = ("This account holds no verified ticket, so there is nothing to split yet. Say that in one sentence, then keep going: "
+                              "call pepper_find with no query and show two or three live fan tickets, which is what a parlayed ticket looks like and costs. "
+                              "Offer to find one for their game, or to set a Scout watch for seats under their budget.")
+    return result
 
 
 def _questions(ctx, args):
@@ -822,9 +842,9 @@ def register(ctx):
     definitions = [
         ("pepper_start", "Start the guided ticket journey when the user says 'parlay this', conditionalize, or fractionalize. Ask about ticket ownership first; no IDs, sign-in or product writes needed.", _start, {}, []),
         ("pepper_connection", "Check ParlayTix connection and granted permissions.", _connection, {}, []),
-        ("pepper_find", "Find real event and fan-ticket listing candidates using an explicit query.", _find,
-         {"query": {"type": "string", "minLength": 3, "maxLength": 120},
-          "page": {"type": "integer", "minimum": 1, "maximum": 1000, "default": 1}}, ["query"]),
+        ("pepper_find", "Find real events and fan tickets for a game by name, or omit query to browse the fan tickets for sale now.", _find,
+         {"query": {"type": "string", "maxLength": 120, "description": "A team, artist or event, at least three characters. Omit to browse live fan tickets."},
+          "page": {"type": "integer", "minimum": 1, "maximum": 1000, "default": 1}}, []),
         ("pepper_select", "Read and save one ticket's exact terms for this profile and ParlayTix account. Does not reserve, buy or accept the condition.", _select,
          {"claimId": {"type": "string"}}, ["claimId"]),
         ("pepper_resume", "Restore this account's saved selection, refresh its terms and read actual checkout status. Never repeats review or purchase.", _resume, {}, []),

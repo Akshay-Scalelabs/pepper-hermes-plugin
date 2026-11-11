@@ -1,10 +1,26 @@
 # Pepper for Hermes
 
+**What Pepper is.** A ticket scout for Hermes. It helps a fan get into a game for less. It finds fan tickets (a real seat that is yours only if a result you pick happens, priced from public odds), watches for seats under a budget, and lets a holder split a ticket they own to get part of its cost back. Pepper places no bets and buys no prediction-market contracts. Polymarket is read only, as the source of the price and the result. What a fan ticket delivers is the seat: there is no cash prize.
+
+## Try it in two minutes, no ticket needed
+
+After [setup](#setup), a new ParlayTix account with nothing in it can do all of this:
+
+| Say | What happens |
+| --- | --- |
+| “show me live fan tickets” | Real fan tickets for sale now: the game and seat, the deciding game and pick, the price beside the full seat price, and the current chance. |
+| “find one for the Lakers” | Offers for that game. Pick one and Pepper opens its exact ParlayTix page to review. Nothing is bought until you confirm there. |
+| “parlay this” | Pepper checks your tickets. With none, it says so and shows live fan tickets, so you see what a split ticket looks like and costs. |
+| “watch for two Knicks tickets under $300” | A draft Ticket Scout watch, started only after you confirm. Needs the Scout permission (see [setup](#setup)). |
+| “resume my Pepper parlay” in a new chat | Your saved selection, split or watch comes back. |
+
+Splitting a ticket you own needs a verified ticket in your account and ParlayTix admission for it. Everything else above works on a fresh account.
+
 Say **“parlay this”** to the Hermes assistant you already use. With a verified ticket, Pepper can show two complementary outcomes for the same seat. Choose the side you want to keep and review listing the other in your wallet. If you need a ticket, Pepper can find an existing offer and show its event, condition, seat and current price. You can resume a saved draft in a new chat.
 
 ## Install
 
-Install Pepper in the Hermes profile that serves your chat. Version 0.5.1 includes Scout watches, wallet review for the other side of a split, and recovery when the receipt arrives after the first status check.
+Install Pepper in the Hermes profile that serves your chat. Version 0.5.2 includes browsing live fan tickets without a query, Scout watches, wallet review for the other side of a split, and recovery when the receipt arrives after the first status check.
 
 ```sh
 hermes plugins install Akshay-Scalelabs/pepper-hermes-plugin --enable
@@ -22,7 +38,7 @@ Pepper opened this signed-out ParlayTix page during a buyer-review test. The pri
 
 Pepper uses the native `register_system_prompt_section`, `call_mcp` and persistent-state APIs. Hermes owns the chat, OAuth and tool approvals.
 
-Sign in with your own ParlayTix account through Hermes. The public MCP uses Streamable HTTP and WorkOS OAuth at `https://mcp.parlaytix.xyz/mcp`. Stock Hermes uses its published client metadata and PKCE.
+Sign in with your own ParlayTix account through Hermes. The public MCP uses Streamable HTTP and WorkOS OAuth at `https://mcp.parlaytix.xyz/mcp`. Stock Hermes uses its published client metadata and PKCE. A new account is free and takes a minute: choose **Continue with Google** or **Email** on the ParlayTix sign-in page. Connecting an assistant needs a verified email, so an account created with a phone number alone cannot complete the connection. Ticket search, review and splitting are allowed as soon as you connect. Scout watches need one more switch: turn on the Scout permission for this connection at `https://parlaytix.xyz/account?tab=agents`. Keep the connection name `parlaytix-prod`; Pepper looks for that exact name.
 
 For a fresh profile, run these commands to configure the connection and sign in.
 
@@ -83,7 +99,7 @@ If the connection test reports `OAUTH_CLIENT_NOT_ALLOWED` after sign-in, contact
 | --- | --- |
 | `pepper_start` | Start the guided ownership/find-ticket conversation without product calls or state changes |
 | `pepper_connection` | Read the current account and granted permissions |
-| `pepper_find` | Explicit-query event search and listing candidates, preserving coverage |
+| `pepper_find` | Browse the fan tickets for sale now, or search events and listings for a named game, preserving coverage |
 | `pepper_select` | Fetch a ticket and save its terms for the verified account/profile |
 | `pepper_resume` | Restore the selection, compare fresh terms and read actual checkout status |
 | `pepper_forget` | Clear only this account/profile's saved selection |
@@ -118,7 +134,8 @@ Try these cases from your own Hermes chat.
 | Try | Expected result |
 | --- | --- |
 | Say “parlay this” in a new chat. | Pepper asks whether you have a ticket or want to find one. The opening makes no product call. |
-| Choose “I have a ticket” with an empty or ineligible inventory. | Pepper explains what your account holds. It cannot create a split from an event name. |
+| Choose “I have a ticket” with an empty or ineligible inventory. | Pepper says what your account holds, then shows live fan tickets and offers to find one or set a watch. It cannot create a split from an event name. |
+| Say “show me live fan tickets.” | Pepper lists real offers with their seat, pick, price and full seat price. An empty list means nothing is listed at that moment. |
 | Preview an eligible ticket, then open a new chat and say “resume my Pepper parlay.” | The same account sees its draft and refreshed terms. Another account cannot resume it. |
 | Resume a split after a timeout. | Pepper checks for the original receipt. If it arrives after the first check, a later resume shows the two confirmed rights. |
 | Decline a native tool approval. | Pepper stops. A new attempt requires a new direction from you. |
