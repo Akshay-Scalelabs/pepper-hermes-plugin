@@ -47,6 +47,9 @@ class StockStateTests(unittest.TestCase):
                 parlay = draft(holder)
                 holder.responses["create_ticket_split"] = RuntimeError("synthetic response loss")
                 self.assertEqual(holder.run("pepper_split", confirmed(parlay))["code"], "RESULT_UNKNOWN")
+                missed = holder_host(state=context().state)
+                missed.responses["get_ticket_split"] = {"ok": False, "error": "TICKET_SPLIT_NOT_FOUND (HTTP 404)"}
+                self.assertTrue(missed.run("pepper_parlay_status")["outcomeUnknown"])
                 recovered = holder_host(state=context().state)
                 self.assertTrue(recovered.run("pepper_parlay_status")["splitCompleted"])
                 self.assertNotIn("create_ticket_split", recovered.call_names())
