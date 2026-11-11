@@ -375,24 +375,53 @@ def _forget(ctx, args):
     return {"ok": True, "nextStep": "Saved selection cleared for this account and profile. This does not cancel a wallet operation or revoke ParlayTix consent."}
 
 
+def _offers(listings):
+    """One short row per live fan ticket, so the model can answer fast. pepper_select reads the full terms."""
+    if not isinstance(listings.get("items"), list):
+        raise Refusal("ParlayTix did not return a valid listing page.")
+    rows = []
+    for item in listings["items"]:
+        if not isinstance(item, dict) or not isinstance(item.get("claimId"), str):
+            continue
+        ticket, condition, listing, pricing = (item.get(key) if isinstance(item.get(key), dict) else {}
+                                               for key in ("ticket", "condition", "listing", "pricing"))
+        amount = lambda value: value if type(value) in (int, float) and value >= 0 else None
+        chance = amount(pricing.get("probability"))
+        rows.append({"claimId": item["claimId"],
+                     **_fields(ticket, ("eventName", "eventDate", "timeZone", "venue", "section", "row")),
+                     "seatPrice": amount(ticket.get("faceValue")),
+                     "pick": _fields(condition, ("outcomeLabel",))["outcomeLabel"],
+                     **{"decidingGame" if key == "eventTitle" else "decidingGameStart": value
+                        for key, value in _fields(condition, ("eventTitle", "gameStartTime")).items()},
+                     "price": amount(listing.get("price")), "currency": _fields(listing, ("currency",))["currency"],
+                     "chance": chance if chance is not None and chance <= 1 and pricing.get("freshness") == "fresh" else None,
+                     **_fields(item, ("tradingClosesAt",)),
+                     "pageUrl": item["pageUrl"] if _card_page(item.get("pageUrl"), item["claimId"]) else None})
+    return {**{key: value for key, value in listings.items() if key != "items"}, "items": rows}
+
+
 def _find(ctx, args):
     page = _integer(args.get("page", 1), "page", 1000)
     if args.get("query") in (None, ""):
         # Browse: the live fan tickets are the honest picture of what a parlayed ticket costs.
-        listings = _call(ctx, "search_ticket_listings", {"query": "", "page": page})
-        if not isinstance(listings.get("items"), list):
-            raise Refusal("ParlayTix did not return a valid listing page.")
+        listings = _offers(_call(ctx, "search_ticket_listings", {"query": "", "page": page}))
         return {"ok": True, "browse": True, "listings": listings,
-                "guidance": "These are real fan tickets for sale now. For two or three, show the attended game and seat, the deciding game and pick, the fan ticket price beside the full seat price, and the current chance. Each is one side of a ticket its holder split: the seat is theirs only if that pick wins, otherwise the price is spent. Ask which game they want; pepper_find with that name narrows it, and pepper_select opens one to review. An empty list means nothing is listed right now, not an error."}
+                "guidance": "These are real fan tickets for sale now. For two or three, show the attended game (eventName, eventDate) and seat, the deciding game and pick, the fan ticket price beside the full seat price (seatPrice), and the current chance when it is not null. Each is one side of a ticket its holder split: the seat is theirs only if that pick wins, otherwise the price is spent. Ask which game they want; pepper_find with that name narrows it, and pepper_select opens one to review. An empty list means nothing is listed right now, not an error."}
     query = _text(args.get("query"), "query", 120)
     if len(query) < 3:
         raise Refusal("Use an explicit event query of at least three characters.")
-    events = _call(ctx, "search_ticket_events", {"query": query})
-    listings = _call(ctx, "search_ticket_listings", {"query": query, "page": page})
-    if not isinstance(listings.get("items"), list):
-        raise Refusal("ParlayTix did not return a valid listing page.")
-    return {"ok": True, "events": events, "listings": listings,
-            "guidance": "Match the attended event, date and seat explicitly. Listing matches are candidates, not guaranteed matches. Fan tickets depend on a separate outcome; ask whether conditional attendance is acceptable. If no listing matches, say so plainly and offer a Scout watch for that event (pepper_watch) or the live tickets for other games (pepper_find with no query)."}
+    try:
+        events, events_note = _call(ctx, "search_ticket_events", {"query": query}), ""
+    except Refusal as error:
+        if error.code in ("NEEDS_REAUTH", "MCP_ACCESS_REQUIRED"):
+            raise
+        # Event search is a separate, slower provider read that Hermes may also hold for approval. The fan tickets
+        # for sale answer "is there a ticket" on their own, so a missing event list never fails the search.
+        events, events_note = None, (" The event search did not return (" + error.code + "), so events is null and only the fan tickets for sale are shown. "
+                                     "Do not retry it unless the user asks; a Scout watch needs it to succeed first.")
+    listings = _offers(_call(ctx, "search_ticket_listings", {"query": query, "page": page}))
+    return {"ok": True, "events": events, "eventsUnavailable": events is None, "listings": listings,
+            "guidance": events_note.strip() + (" " if events_note else "") + "Match the attended event, date and seat explicitly. Listing matches are candidates, not guaranteed matches. Fan tickets depend on a separate outcome; ask whether conditional attendance is acceptable. If no listing matches, say so plainly and offer a Scout watch for that event (pepper_watch) or the live tickets for other games (pepper_find with no query)."}
 
 
 def _review(ctx, args):
