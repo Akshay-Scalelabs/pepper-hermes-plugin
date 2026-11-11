@@ -52,8 +52,8 @@ class Refusal(Exception):
 # ParlayTix's own public refusal codes, exactly as its gateway prints them: "CODE (HTTP 409)". Only these exact
 # tokens are recognised, and only the fixed sentence below is returned, never the surrounding upstream text.
 REFUSALS = {
-    "TICKET_ALREADY_FRACTIONALIZED": "This ticket has already been split, so it cannot be split again. Nothing was created.",
-    "HOLDER_SPLIT_UNAVAILABLE": "ParlayTix is not accepting a split for this account or ticket right now. Nothing was created.",
+    "TICKET_ALREADY_FRACTIONALIZED": "ParlayTix reports this ticket has already been split. Check the original split status.",
+    "HOLDER_SPLIT_UNAVAILABLE": "ParlayTix is not accepting a split for this account or ticket right now.",
     "TICKET_NOT_FOUND": "ParlayTix found no such ticket in this account.",
     "TICKET_NOT_AVAILABLE": "This is not a verified whole ticket that can be split.",
     "HOLDER_BINARY_SPLIT_REQUIRED": "That question does not have exactly two outcomes. Choose a Yes/No question.",
@@ -434,6 +434,10 @@ def _parlay_state(ctx, account, value=None, *, write=False):
             valid = False
         if not valid:
             raise Refusal("The saved Parlay draft is unreadable and has been preserved.", "STATE_INVALID")
+        # Older releases kept the chosen side when they reset a submitted draft to preview.
+        # The saved record cannot distinguish a definite refusal from an early status miss.
+        if saved["phase"] == "preview" and saved.get("keepOutcomeId"):
+            return {**saved, "phase": "requesting"}
     return saved
 
 
@@ -526,13 +530,11 @@ def _parlay_status_for(ctx, account, saved):
     except Refusal as error:
         if error.code != "TICKET_SPLIT_NOT_FOUND" or saved.get("splitId"):
             raise
-        # ParlayTix never recorded this request. The draft keeps its request key, so confirming it again cannot
-        # create a second split even if the first attempt is still landing.
+        # A read can arrive before the issuer commits. Leave the saved request untouched,
+        # including any newer receipt another conversation may have just saved.
         _same_account(ctx, account)
-        saved = {**saved, "phase": "preview"}
-        _parlay_state(ctx, account, saved, write=True)
-        return {"ok": True, "draft": _parlay_draft(saved), "splitCompleted": False, "notCreated": True,
-                "nextStep": "ParlayTix has no split for this request, so nothing was created. The draft is a preview again: ask the user whether to confirm it with pepper_split or forget it."}
+        return {"ok": True, "draft": _parlay_draft(saved), "splitCompleted": False, "outcomeUnknown": True,
+                "nextStep": "The original split has no receipt yet and may still finish. Keep this draft and check pepper_parlay_status later. Only if the user explicitly asks to resend the same split, reconfirm the original terms and kept side and use retryUnresolved."}
     split_id = _text(data.get("splitId"), "splitId")
     if (saved.get("splitId") and saved["splitId"] != split_id) or data.get("rootCollateralId") != saved["source"]["collateralId"]:
         raise Refusal("The returned split does not match this saved ticket.")
@@ -569,29 +571,50 @@ def _split(ctx, args):
     saved = _parlay_state(ctx, account)
     if not saved or saved["draftId"] != args.get("draftId"):
         raise Refusal("Preview the exact split in this account before confirming it.", "PARLAY_DRAFT_REQUIRED")
-    if saved.get("phase") != "preview":
-        return _parlay_status_for(ctx, account, saved)
+    recovering = saved["phase"] != "preview"
+    if recovering:
+        status = _parlay_status_for(ctx, account, saved)
+        if not status.get("outcomeUnknown") or args.get("retryUnresolved") is not True:
+            return status
+    elif args.get("retryUnresolved") is True:
+        raise Refusal("There is no unresolved request to resend for this draft.", "SPLIT_CONFIRMATION_REQUIRED")
     keep = _text(args.get("keepOutcomeId"), "keepOutcomeId")
-    if args.get("confirmed") is not True or keep not in {side["outcomeId"] for side in saved["preview"]["outcomes"]}:
+    if (args.get("confirmed") is not True or keep not in {side["outcomeId"] for side in saved["preview"]["outcomes"]}
+            or (recovering and keep != saved.get("keepOutcomeId"))):
         raise Refusal("The user must accept the displayed split and choose the exact outcome to keep.", "SPLIT_CONFIRMATION_REQUIRED")
-    current = _holder_preview(_call(ctx, "preview_ticket_split", saved["source"]))
-    if not current["splitEnabled"]:
-        raise Refusal("Holder splitting is not enabled on ParlayTix yet. Keep this preview; no split was submitted.", "SPLIT_UNAVAILABLE")
-    if _split_terms(current) != _split_terms(saved["preview"]):
-        raise Refusal("The split terms changed. Preview again and obtain fresh acceptance.", "TERMS_CHANGED")
-    _same_account(ctx, account, "ticketing:write")
-    saved = {**saved, "phase": "requesting", "keepOutcomeId": keep}
-    # Persist the request key BEFORE the write. A lost response is recovered by a read, never a blind retry.
-    _parlay_state(ctx, account, saved, write=True)
+    submitted = None
     try:
+        current = _holder_preview(_call(ctx, "preview_ticket_split", saved["source"]))
+        if not current["splitEnabled"]:
+            raise Refusal("Holder splitting is not enabled for this preview.", "SPLIT_UNAVAILABLE")
+        if _split_terms(current) != _split_terms(saved["preview"]):
+            raise Refusal("The split terms changed. Preview again and obtain fresh acceptance.", "TERMS_CHANGED")
+        _same_account(ctx, account, "ticketing:write")
+        if _parlay_state(ctx, account) != saved:
+            raise Refusal("The draft changed during review. Resume the original split to see its status.", "PARLAY_PENDING")
+        submitted = {**saved, "phase": "retrying" if recovering else "requesting", "keepOutcomeId": keep}
+        _parlay_state(ctx, account, submitted, write=True)
         result = _call(ctx, "create_ticket_split", {**saved["source"], "universeHash": current["universeHash"],
                        "previewHash": current["previewHash"], "idempotencyKey": "pepper-" + saved["draftId"], "confirmed": True})
     except Refusal as error:
-        if error.code in ("APPROVAL_DENIED", "APPROVAL_UNAVAILABLE") or error.code in SPLIT_NOT_CREATED:
-            _parlay_state(ctx, account, {**saved, "phase": "preview"}, write=True)
+        if recovering and (error.code in SPLIT_NOT_CREATED or error.code in ("TERMS_CHANGED", "SPLIT_UNAVAILABLE")):
+            raise Refusal(f"ParlayTix refused the retry ({error.code}). The original split may still finish. Check pepper_parlay_status.", error.code) from None
+        if (not recovering and submitted is not None
+                and (error.code in SPLIT_NOT_CREATED or error.code in ("APPROVAL_DENIED", "APPROVAL_UNAVAILABLE"))
+                and _parlay_state(ctx, account) == submitted):
+            _parlay_state(ctx, account, saved, write=True)
         raise
-    saved = {**saved, "splitId": _text(result.get("splitId"), "splitId"), "phase": "pending"}
+    split_id = _text(result.get("splitId"), "splitId")
     _same_account(ctx, account, "ticketing:write")
+    # Another chat may already have recovered this request while create was returning.
+    latest = _parlay_state(ctx, account)
+    if not latest or latest["draftId"] != saved["draftId"]:
+        raise Refusal("The saved draft changed while ParlayTix accepted the split. Check your owned rights.", "PARLAY_DRAFT_REQUIRED")
+    if latest.get("splitId"):
+        if latest["splitId"] != split_id:
+            raise Refusal("The split receipt does not match the original request.", "SPLIT_MISMATCH")
+        return _parlay_status_for(ctx, account, latest)
+    saved = {**latest, "keepOutcomeId": keep, "splitId": split_id, "phase": "pending"}
     _parlay_state(ctx, account, saved, write=True)
     return {"ok": True, "draft": _parlay_draft(saved), "splitCompleted": False,
             "nextStep": "The split was accepted for issuance. Read pepper_parlay_status until both rights are confirmed. Nothing has been listed."}
@@ -633,7 +656,9 @@ def _prepared_listing(ctx, claim_id, cents, draft_id):
             raise
         return None
     handoff = data.get("handoff")
-    operation = handoff.get("operationId") if isinstance(handoff, dict) else None
+    if not isinstance(handoff, dict):
+        handoff = {}
+    operation = handoff.get("operationId")
     if (data.get("claimId") != claim_id or data.get("priceCents") != cents or data.get("listingCreated") is not False
             or not isinstance(operation, str) or not re.fullmatch(r"0x[0-9a-f]{64}", operation)
             or handoff.get("claimId") != claim_id or handoff.get("action") != "list"
@@ -742,7 +767,7 @@ def _watches(ctx, args):
     if args.get("scoutId"):
         data = _call(ctx, "get_scout_intent", {"scoutId": _scout_id(args["scoutId"])})
     else:
-        body = {"limit": 20}
+        body: dict[str, object] = {"limit": 20}
         if args.get("cursor"):
             body["cursor"] = _text(args["cursor"], "cursor", 20)
         data = _call(ctx, "list_scout_intents", body)
@@ -816,8 +841,10 @@ def register(ctx):
          {"collateralId": {"type": "string"}, "query": {"type": "string"}, "eventId": {"type": "string"}, "page": {"type": "integer"}}, ["collateralId"]),
         ("pepper_parlay", "Preview and save a Parlay split of your whole ticket into two complementary rights. Does not create rights.", _parlay,
          {"collateralId": {"type": "string"}, "eventId": {"type": "string"}, "conditionId": {"type": "string"}}, ["collateralId", "eventId"]),
-        ("pepper_split", "Create the exact reviewed split only after the user's explicit confirmation and chosen keep outcome. Subsequent calls only read status.", _split,
-         {"draftId": {"type": "string"}, "keepOutcomeId": {"type": "string"}, "confirmed": {"type": "boolean"}}, ["draftId", "keepOutcomeId", "confirmed"]),
+        ("pepper_split", "Confirm the reviewed split and chosen side. Subsequent calls read the original request unless the user explicitly reconfirms a missing receipt and asks to resend.", _split,
+         {"draftId": {"type": "string"}, "keepOutcomeId": {"type": "string"}, "confirmed": {"type": "boolean"},
+          "retryUnresolved": {"type": "boolean", "description": "Use only on a fresh explicit request to resend the same unresolved split on its original terms and kept side."}},
+         ["draftId", "keepOutcomeId", "confirmed"]),
         ("pepper_parlay_status", "Resume the saved Parlay draft or read its confirmed rights and actual listing. Recovers a lost creation response without resubmitting.", _parlay_status, {}, []),
         ("pepper_offer", "Save a proposed asking price and return the ParlayTix review for the other right, already at that price when ParlayTix can prepare it. Preserves the chosen keep outcome; creates no listing.", _offer,
          {"draftId": {"type": "string"}, "askingPrice": {"type": "string", "description": "User-chosen price in USD/USDC units, at most two decimal places."}}, ["draftId", "askingPrice"]),

@@ -188,18 +188,57 @@ class ParlayTests(unittest.TestCase):
             self.assertNotIn("SECRET", refused["error"])
             self.assertEqual(h.state.values[next(iter(h.state.values))]["phase"], "requesting")
 
-    def test_a_request_parlaytix_never_recorded_returns_to_preview_with_the_same_key(self):
-        h = host(); d = draft(h)
-        h.responses["create_ticket_split"] = RuntimeError("synthetic response loss")
-        self.assertEqual(h.run("pepper_split", confirmed(d))["code"], "RESULT_UNKNOWN")
+    def test_early_not_found_preserves_the_original_request_across_chats(self):
+        for legacy_preview in (False, True):
+            with self.subTest(legacy_preview=legacy_preview):
+                h = host()
+                d = draft(h)
+                h.responses["create_ticket_split"] = RuntimeError("lost response")
+                self.assertEqual(h.run("pepper_split", confirmed(d))["code"], "RESULT_UNKNOWN")
+                if legacy_preview:
+                    # 0.5.0 saved this exact state after the first missing status.
+                    next(iter(h.state.values.values()))["phase"] = "preview"
+                fresh = host(h.state)
+                fresh.responses["get_ticket_split"] = {"ok": False, "error": "TICKET_SPLIT_NOT_FOUND (HTTP 404)"}
+                pending = fresh.run("pepper_parlay_status")
+                self.assertTrue(pending["outcomeUnknown"])
+                self.assertEqual(pending["draft"]["keepOutcomeId"], "condition:YES")
+                self.assertTrue(fresh.run("pepper_split", confirmed(d))["outcomeUnknown"])
+                self.assertEqual(fresh.run("pepper_parlay_forget", {"draftId": d["draftId"], "confirmed": True})["code"], "PARLAY_PENDING")
+                self.assertEqual(fresh.run("pepper_parlay", {"collateralId": "another", "eventId": "123"})["code"], "PARLAY_PENDING")
+                self.assertEqual(fresh.run("pepper_offer", {"draftId": d["draftId"], "askingPrice": "25"})["code"], "SPLIT_PENDING")
+                fresh.responses["get_ticket_split"] = status()
+                ready = fresh.run("pepper_parlay_status")
+                self.assertTrue(ready["splitCompleted"])
+                self.assertEqual(ready["draft"]["draftId"], d["draftId"])
+                self.assertEqual({right["claimId"] for right in ready["status"]["assets"]}, {"claim_YES", "claim_NO"})
+                lookups = [args for _, tool, args in fresh.calls if tool == "get_ticket_split"]
+                self.assertTrue(all(args == {"idempotencyKey": "pepper-" + d["draftId"]} for args in lookups))
+                self.assertEqual(set(fresh.call_names()), {"get_connection_permissions", "get_ticket_split"})
+
+    def test_explicit_retry_checks_the_original_key_and_requires_the_same_accepted_terms(self):
+        h = host()
+        d = draft(h)
+        h.responses["create_ticket_split"] = RuntimeError("lost response")
+        h.run("pepper_split", confirmed(d))
         h.responses["get_ticket_split"] = {"ok": False, "error": "TICKET_SPLIT_NOT_FOUND (HTTP 404)"}
-        status = h.run("pepper_parlay_status")
-        self.assertTrue(status["notCreated"])
-        self.assertEqual(status["draft"]["phase"], "preview")
+        retry = {**confirmed(d), "retryUnresolved": True}
+        for change in ({"confirmed": False}, {"keepOutcomeId": "condition:NO"}):
+            self.assertEqual(h.run("pepper_split", {**retry, **change})["code"], "SPLIT_CONFIRMATION_REQUIRED")
+        h.responses["preview_ticket_split"]["ticket"]["seat"] = "different"
+        self.assertEqual(h.run("pepper_split", retry)["code"], "TERMS_CHANGED")
+        self.assertEqual(h.call_names().count("create_ticket_split"), 1)
+        h.responses["preview_ticket_split"] = preview()
+        h.responses["create_ticket_split"] = {"ok": False, "error": "HOLDER_SPLIT_UNAVAILABLE (HTTP 409)"}
+        self.assertEqual(h.run("pepper_split", retry)["code"], "HOLDER_SPLIT_UNAVAILABLE")
+        self.assertTrue(h.run("pepper_parlay_status")["outcomeUnknown"])
         h.responses["create_ticket_split"] = {"splitId": "split_1"}
-        self.assertTrue(h.run("pepper_split", confirmed(d))["ok"])
-        keys = [args["idempotencyKey"] for _, tool, args in h.calls if tool == "create_ticket_split"]
-        self.assertEqual(keys, ["pepper-" + d["draftId"]] * 2)
+        self.assertTrue(h.run("pepper_split", retry)["ok"])
+        writes = [args for _, tool, args in h.calls if tool == "create_ticket_split"]
+        self.assertEqual(writes, [writes[0]] * 3)
+        h.responses["get_ticket_split"] = status()
+        self.assertTrue(h.run("pepper_split", retry)["splitCompleted"])
+        self.assertEqual(h.call_names().count("create_ticket_split"), 3)
 
     def test_a_known_split_that_goes_missing_stays_protected(self):
         h = host(); d = draft(h)
@@ -207,6 +246,39 @@ class ParlayTests(unittest.TestCase):
         h.responses["get_ticket_split"] = {"ok": False, "error": "TICKET_SPLIT_NOT_FOUND (HTTP 404)"}
         self.assertEqual(h.run("pepper_parlay_status")["code"], "TICKET_SPLIT_NOT_FOUND")
         self.assertEqual(h.run("pepper_parlay_forget", {"draftId": d["draftId"], "confirmed": True})["code"], "PARLAY_PENDING")
+
+    def test_late_create_reply_preserves_the_offer_saved_in_another_chat(self):
+        h = host()
+        d = draft(h)
+        fresh = host(h.state)
+
+        def late_reply():
+            offer = fresh.run("pepper_offer", {"draftId": d["draftId"], "askingPrice": "25"})
+            self.assertTrue(offer["ok"])
+            return {"splitId": "split_1"}
+
+        h.responses["create_ticket_split"] = late_reply
+        result = h.run("pepper_split", confirmed(d))
+        self.assertTrue(result["splitCompleted"])
+        self.assertEqual(result["draft"]["offer"]["claimId"], "claim_NO")
+        self.assertEqual(h.call_names().count("create_ticket_split"), 1)
+
+    def test_first_refusal_does_not_erase_a_concurrent_retry_with_a_missing_receipt(self):
+        h = host()
+        d = draft(h)
+        fresh = host(h.state)
+        fresh.responses["get_ticket_split"] = {"ok": False, "error": "TICKET_SPLIT_NOT_FOUND (HTTP 404)"}
+        fresh.responses["create_ticket_split"] = RuntimeError("lost response")
+
+        def first_refusal():
+            retried = fresh.run("pepper_split", {**confirmed(d), "retryUnresolved": True})
+            self.assertEqual(retried["code"], "RESULT_UNKNOWN")
+            return {"ok": False, "error": "HOLDER_SPLIT_UNAVAILABLE (HTTP 409)"}
+
+        h.responses["create_ticket_split"] = first_refusal
+        self.assertEqual(h.run("pepper_split", confirmed(d))["code"], "HOLDER_SPLIT_UNAVAILABLE")
+        self.assertTrue(fresh.run("pepper_parlay_status")["outcomeUnknown"])
+        self.assertTrue(h.run("pepper_parlay_status")["splitCompleted"])
 
     def test_a_failed_split_can_be_forgotten(self):
         h = host(); d = draft(h)

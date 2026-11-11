@@ -4,7 +4,7 @@ Say **“parlay this”** to the Hermes assistant you already use. With a verifi
 
 ## Install
 
-Run the install on the host and Hermes profile that serve your chat. Pepper 0.4.0 was tested on stock Hermes 0.23.0. Version 0.5.0 adds Scout watches, named refusals and the listing handoff; it has run only against the synthetic test suite, not yet on Hermes.
+Install Pepper in the Hermes profile that serves your chat. Version 0.5.1 includes Scout watches, wallet review for the other side of a split, and recovery when the receipt arrives after the first status check.
 
 ```sh
 hermes plugins install Akshay-Scalelabs/pepper-hermes-plugin --enable
@@ -109,7 +109,7 @@ The account-bound Parlay record stores one current draft: exact ticket/source id
 
 `pepper_forget` clears the current account's record after a successful identity check. Other accounts/profiles keep their own selections. Uninstalling a package does not necessarily delete Hermes's plugin-data directory; manage retained plugin data separately if the account can no longer sign in. Resuming never requests a new checkout, changes the saved accepted terms or automatically retries an unknown response.
 
-Explicit stock-Hermes approval denial and reauthentication responses retain their stop instructions through bounded error categories. Unknown responses never authorize automatic retries: inspect product status and connection state first. ParlayTix's public refusal codes (for example `TICKET_ALREADY_FRACTIONALIZED (HTTP 409)`) are recognised by exact match against a fixed list and returned as that code with a fixed sentence. A split refused before anything was written, or one ParlayTix never recorded, returns the draft to a preview that can be confirmed again under the same request key or forgotten. Raw upstream errors are not returned.
+If Hermes denies an approval or requests sign-in, Pepper stops and explains the next step. A definite refusal of the first split leaves the draft available for a fresh preview. After a timeout, say **“resume my Pepper parlay.”** Pepper checks the original request, even in a new chat. A missing receipt leaves the outcome unknown and the chosen side saved. You can check again later. If you explicitly ask to resend, Pepper checks for a receipt first, verifies the original terms and kept side, and reuses the original request key. A refusal of that retry leaves the first request available to check.
 
 ## Verification
 
@@ -120,6 +120,7 @@ Try these cases from your own Hermes chat.
 | Say “parlay this” in a new chat. | Pepper asks whether you have a ticket or want to find one. The opening makes no product call. |
 | Choose “I have a ticket” with an empty or ineligible inventory. | Pepper explains what your account holds. It cannot create a split from an event name. |
 | Preview an eligible ticket, then open a new chat and say “resume my Pepper parlay.” | The same account sees its draft and refreshed terms. Another account cannot resume it. |
+| Resume a split after a timeout. | Pepper checks for the original receipt. If it arrives after the first check, a later resume shows the two confirmed rights. |
 | Decline a native tool approval. | Pepper stops. A new attempt requires a new direction from you. |
 | Choose “find one,” select an offer and open wallet review. | The Terminal page shows the selected terms. Opening review does not complete a purchase. |
 | Choose “find one,” then ask Pepper to watch for two tickets under a total price. | Pepper saves a draft watch, shows its terms and activates it only after you confirm. Without Scout consent it says so and makes no watch. |
